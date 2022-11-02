@@ -42,7 +42,7 @@ from itertools import chain
 import torch
 
 
-def nsgfwin(f, q, sr, Ls, sliced=True, min_win=4, Qvar=1, dowarn=True, dtype=np.float64, device="cpu"):
+def nsgfwin(f, q, sr, Ls,  min_win=4, Qvar=1, dowarn=True, dtype=np.float64, device="cpu"):
     nf = sr/2.
 
     lim = np.argmax(f > 0)
@@ -62,8 +62,8 @@ def nsgfwin(f, q, sr, Ls, sliced=True, min_win=4, Qvar=1, dowarn=True, dtype=np.
     assert np.all(q > 0)  # all q must be > 0
     
     qneeded = f*(Ls/(8.*sr))
-    if np.any(q >= qneeded) and dowarn:
-        warn("Q-factor too high for frequencies %s"%",".join("%.2f"%fi for fi in f[q >= qneeded]))
+    #if np.any(q >= qneeded) and dowarn:
+    #    warn("Q-factor too high for frequencies %s"%",".join("%.2f"%fi for fi in f[q >= qneeded]))
     
     fbas = f
     lbas = len(fbas)
