@@ -14,14 +14,14 @@ def next_power_of_2(x):
     return 1 if x == 0 else 2**math.ceil(math.log2(x))
 
 class CQT_nsgt():
-    def __init__(self,numocts, binsoct, mode="matrix",fs=44100, audio_len=44100, device="cpu"):
+    def __init__(self,numocts, binsoct, mode="critical",fs=44100, audio_len=44100, device="cpu"):
         """
             args:
                 numocts (int) number of octaves
                 binsoct (int) number of bins per octave
                 mode (string) defines the mode of operation:
+                     "critical": (default) critical sampling (no redundancy) returns a list of tensors, each with different time resolution
                      "matrix": returns a 2d-matrix maximum redundancy
-                     "critical": critical sampling (no redundancy) returns a list of tensors, each with different time resolution
                      "oct": octave-wise rasterization ( modearate redundancy) returns a list of tensors, each from a different octave with different time resolution
                 fs (float) sampling frequency
                 audio_len (int) sample length
@@ -147,9 +147,22 @@ class CQT_nsgt():
             self.loopparams_dec.append(p)
 
 
-    def nsgtf(self,f):
+    def nsgtf(self,t):
+        """
+            forward transform
+            args:
+                t: Tensor shape(B, C, T) time-domain waveform
+            returns:
+                if mode = "matrix" 
+                    ret: Tensor shape (B, C, F, T') 2d spectrogram spectrogram matrix
+                else 
+                    ret: list([Tensor]) list of tensors of shape (B, C, Fbibs, T') , representing the bands with the same time-resolution.
+                    if mode="oct", the elements on the lists correspond to different octaves
+                
+        """
+        
 
-        ft = torch.fft.fft(f)
+        ft = torch.fft.fft(t)
     
         Ls = f.shape[-1]
         #print("yo",nn, Ls)
@@ -159,7 +172,7 @@ class CQT_nsgt():
             c = torch.zeros(*f.shape[:2], len(self.loopparams_enc), self.maxLg_enc, dtype=ft.dtype, device=torch.device(self.device))
     
             for j, (mii,win_range,Lg,col) in enumerate(self.loopparams_enc):
-                t = ft[:, :, win_range]*torch.fft.fftshift(self.giis[j, :Lg])
+                t = ft[:, :, win_range]*torch.fft.fftshift(self.giis[j, :Lg]) #this needs to be parllelized!!!
     
                 sl1 = slice(None,(Lg+1)//2)
                 sl2 = slice(-(Lg//2),None)
@@ -178,7 +191,7 @@ class CQT_nsgt():
 
                 c = torch.zeros(*f.shape[:2], 1, mii, dtype=ft.dtype, device=torch.device(self.device))
         
-                t = ft[:, :, win_range]*torch.fft.fftshift(self.giis[j, :Lg])
+                t = ft[:, :, win_range]*torch.fft.fftshift(self.giis[j, :Lg]) #this needs to be parallelized!
         
                 sl1 = slice(None,(Lg+1)//2)
                 sl2 = slice(-(Lg//2),None)
