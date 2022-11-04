@@ -134,7 +134,8 @@ class CQT_nsgt():
         if self.mode=="matrix":
             self.gdiis = get_ragged_gdiis(self.gd)
             self.gdiis = self.gdiis[0:(self.gdiis.shape[0]//2 +1)]
-        elif self.mode=="oct":
+        else:
+            #elif self.mode=="oct":
             self.gdiis=get_ragged_gdiis_oct(self.gd, self.M[sl])
 
         self.loopparams_dec = []
@@ -168,56 +169,25 @@ class CQT_nsgt():
     
             return torch.fft.ifft(c)
     
-        elif self.mode=="oct":
+        else: 
             block_ptr = -1
             bucketed_tensors = []
             ret = []
-            
+        
             for j, (mii,win_range,Lg,col) in enumerate(self.loopparams_enc):
-    
-                c = torch.zeros(*f.shape[:2], 1, mii, dtype=ft.dtype, device=torch.device(self.device)) #that is inefficient, should be allocated outside maybe
-            
+
+                c = torch.zeros(*f.shape[:2], 1, mii, dtype=ft.dtype, device=torch.device(self.device))
+        
                 t = ft[:, :, win_range]*torch.fft.fftshift(self.giis[j, :Lg])
-            
+        
                 sl1 = slice(None,(Lg+1)//2)
                 sl2 = slice(-(Lg//2),None)
-            
+        
                 c[:, :, 0, sl1] = t[:, :, Lg//2:]  # if mii is odd, this is of length mii-mii//2
                 c[:, :, 0, sl2] = t[:, :, :Lg//2]  # if mii is odd, this is of length mii//2
-            
+        
                 # start a new block
                 if block_ptr == -1 or bucketed_tensors[block_ptr][0].shape[-1] != mii:
-                    bucketed_tensors.append(c)
-                    block_ptr += 1
-                else:
-                    # concat block to previous contiguous frequency block with same time resolution
-                    bucketed_tensors[block_ptr] = torch.cat([bucketed_tensors[block_ptr], c], dim=2)
-    
-            # bucket-wise ifft
-            for bucketed_tensor in bucketed_tensors:
-                ret.append(torch.fft.ifft(bucketed_tensor))
-    
-            return ret
-
-        else: #is this redundant??
-            block_ptr = -1
-            bucketed_tensors = []
-            ret = []
-        
-            for j, (mii,win_range,Lg,col) in enumerate(self.loopparams_enc):
-                
-                c = torch.zeros(*f.shape[:2], 1, Lg, dtype=ft.dtype, device=torch.device(device))
-        
-                t = ft[:, :, win_range]*torch.fft.fftshift(self.giis[j, :Lg])
-        
-                sl1 = slice(None,(Lg+1)//2)
-                sl2 = slice(-(Lg//2),None)
-        
-                c[:, :, 0, sl1] = t[:, :, Lg//2:]  # if mii is odd, this is of length mii-mii//2
-                c[:, :, 0, sl2] = t[:, :, :Lg//2]  # if mii is odd, this is of length mii//2
-        
-                # start a new block
-                if block_ptr == -1 or bucketed_tensors[block_ptr][0].shape[-1] != Lg:
                     bucketed_tensors.append(c)
                     block_ptr += 1
                 else:
