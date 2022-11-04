@@ -91,8 +91,51 @@ class CQT_nsgt():
         self.maxLg_dec = max(len(gdii) for gdii in self.gd)
         print(self.maxLg_enc, self.maxLg_dec)
        
-        ragged_gdiis = [torch.nn.functional.pad(torch.unsqueeze(gdii, dim=0), (0, self.maxLg_dec-gdii.shape[0])) for gdii in self.gd]
-        self.gdiis = torch.conj(torch.cat(ragged_gdiis))
+        #ragged_gdiis = [torch.nn.functional.pad(torch.unsqueeze(gdii, dim=0), (0, self.maxLg_dec-gdii.shape[0])) for gdii in self.gd]
+        #self.gdiis = torch.conj(torch.cat(ragged_gdiis))
+
+        def get_ragged_gdiis(gd):
+            ragged_gdiis=[]
+            for g in gd:
+                Lg=g.shape[0]
+                gl=g[:(Lg+1)//2]
+                gr=g[(Lg+1)//2:]
+                zeros = torch.zeros(self.maxLg_dec-Lg ,dtype=g.dtype, device=g.device)  # pre-allocation
+                paddedg=torch.cat((gl, zeros, gr),0).unsqueeze(0)
+                ragged_gdiis.append(paddedg)
+            return torch.conj(torch.cat(ragged_gdiis))*self.maxLg_dec
+
+        def get_ragged_gdiis_oct(gd, ms):
+            seq_gdiis=[]
+            ragged_gdiis=[]
+            mprev=-1
+            for i,(g,m) in enumerate(zip(gd, ms)):
+                if i>0 and m!=mprev:
+                    gdii=torch.conj(torch.cat(ragged_gdiis))
+                    if len(gdii.shape)==1:
+                        gdii=gdii.unsqueeze(0)
+                    #seq_gdiis.append(gdii[0:gdii.shape[0]//2 +1])
+                    seq_gdiis.append(gdii)
+                    ragged_gdiis=[]
+                    
+                Lg=g.shape[0]
+                gl=g[:(Lg+1)//2]
+                gr=g[(Lg+1)//2:]
+                zeros = torch.zeros(m-Lg ,dtype=g.dtype, device=g.device)  # pre-allocation
+                paddedg=torch.cat((gl, zeros, gr),0).unsqueeze(0)*m
+                ragged_gdiis.append(paddedg)
+                mprev=m
+            
+            gdii=torch.conj(torch.cat(ragged_gdiis))
+            seq_gdiis.append(gdii)
+            #seq_gdiis.append(gdii[0:gdii.shape[0]//2 +1])
+            return seq_gdiis
+
+        if self.mode=="matrix":
+            self.gdiis = get_ragged_gdiis(self.gd)
+            self.gdiis = self.gdiis[0:(self.gdiis.shape[0]//2 +1)]
+        elif self.mode=="oct":
+            self.gdiis=get_ragged_gdiis_oct(self.gd, self.M[sl])
 
         self.loopparams_dec = []
         for gdii,win_range in zip(self.gd, self.wins):
@@ -214,57 +257,40 @@ class CQT_nsgt():
             fc = torch.fft.fft(cseq)
         
         fr = torch.zeros(*cseq_shape[:2], self.nn, dtype=cseq_dtype, device=torch.device(self.device))  # Allocate output
-        temp0 = torch.empty(*cseq_shape[:2], self.maxLg_dec, dtype=fr.dtype, device=torch.device(self.device))  # pre-allocation
+        #temp0 = torch.empty(*cseq_shape[:2], self.maxLg_dec, dtype=fr.dtype, device=torch.device(self.device))  # pre-allocation
         
         fbins = cseq_shape[2]
         
         # The overlap-add procedure including multiplication with the synthesis windows
         #tart=time.time()
         if self.mode=="matrix":
+            temp0=fc*self.gdiis.unsqueeze(0).unsqueeze(0)
+
             for i,(wr1,wr2,Lg) in enumerate(self.loopparams_dec[:fbins]):
-                t = fc[:, :, i]
         
                 r = (Lg+1)//2
                 l = (Lg//2)
+                fr[:, :, wr1] += temp0[:,:,i,self.maxLg_dec-l:self.maxLg_dec]
+                fr[:, :, wr2] += temp0[:,:,i, :r]
         
-                t1 = temp0[:, :, :r]
-                t2 = temp0[:, :, Lg-l:Lg]
-        
-                t1[:, :, :] = t[:, :, :r]
-                t2[:, :, :] = t[:, :, self.maxLg_dec-l:self.maxLg_dec]
-        
-                temp0[:, :, :Lg] *= self.gdiis[i, :Lg] 
-                temp0[:, :, :Lg] *= self.maxLg_dec
-        
-                fr[:, :, wr1] += t2
-                fr[:, :, wr2] += t1
         else:
             # frequencies are bucketed by same time resolution
             fbin_ptr = 0
-            for i, fc in enumerate(cseq):
+            for j, (fc, gdii_j) in enumerate(zip(cseq, self.gdiis)):
                 Lg_outer = fc.shape[-1]
         
                 nb_fbins = fc.shape[2]
+                temp0 = torch.zeros(*cseq_shape[:2],nb_fbins, Lg_outer, dtype=cseq_dtype, device=torch.device(self.device))  # Allocate output
+        
+                temp0=fc*gdii_j.unsqueeze(0).unsqueeze(0)
+
                 for i,(wr1,wr2,Lg) in enumerate(self.loopparams_dec[fbin_ptr:fbin_ptr+nb_fbins][:fbins]):
-                    freq_idx = fbin_ptr+i
-        
-                    #assert Lg == Lg_outer
-                    t = fc[:, :, i]
-        
                     r = (Lg+1)//2
                     l = (Lg//2)
         
-                    t1 = temp0[:, :, :r]
-                    t2 = temp0[:, :, Lg-l:Lg]
-        
-                    t1[:, :, :] = t[:, :, :r]
-                    t2[:, :, :] = t[:, :, Lg_outer-l:Lg_outer]
-        
-                    temp0[:, :, :Lg] *= self.gdiis[freq_idx, :Lg] 
-                    temp0[:, :, :Lg] *= Lg_outer
-        
-                    fr[:, :, wr1] += t2
-                    fr[:, :, wr2] += t1
+                    fr[:, :, wr1] += temp0[:,:,i,Lg_outer-l:Lg_outer]
+                    fr[:, :, wr2] += temp0[:,:,i, :r]
+
                 fbin_ptr += nb_fbins
         
         #end=time.time()
