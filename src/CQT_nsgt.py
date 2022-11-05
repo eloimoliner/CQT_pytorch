@@ -164,7 +164,7 @@ class CQT_nsgt():
 
         ft = torch.fft.fft(t)
     
-        Ls = f.shape[-1]
+        Ls = t.shape[-1]
         #print("yo",nn, Ls)
         assert self.nn == Ls
     
