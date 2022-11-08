@@ -28,7 +28,7 @@ class CQT_nsgt():
                 device
         """
 
-        fmax=fs/2 #the maximum frequency is Nyquist
+        fmax=fs/2 -10**-6 #the maximum frequency is Nyquist
         self.Ls=audio_len #the length is given
 
         fmin=fmax/(2**numocts)
@@ -147,7 +147,7 @@ class CQT_nsgt():
             self.loopparams_dec.append(p)
 
 
-    def nsgtf(self,t):
+    def nsgtf(self,f):
         """
             forward transform
             args:
@@ -162,10 +162,10 @@ class CQT_nsgt():
         """
         
 
-        ft = torch.fft.fft(t)
+        ft = torch.fft.fft(f)
     
-        Ls = t.shape[-1]
-        #print("yo",nn, Ls)
+        Ls = f.shape[-1]
+
         assert self.nn == Ls
     
         if self.mode=="matrix":
