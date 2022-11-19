@@ -38,7 +38,7 @@ cqt=CQT_nsgt(numocts, binsoct, mode="matrix",fs=fs, audio_len=Ls)
 x=x[...,0:Ls]
 
 #set profiler
-wait, warmup, active, repeat = 1, 1, 2, 1
+wait, warmup, active, repeat = 10, 10, 2, 1
 total_steps = (wait + warmup + active) * (1 + repeat)
 schedule =  torch.profiler.schedule(
 wait=wait, warmup=warmup, active=active, repeat=repeat)
