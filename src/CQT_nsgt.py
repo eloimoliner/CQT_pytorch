@@ -70,7 +70,8 @@ class CQT_nsgt():
 
         #FORWARD!! this is from nsgtf
         #self.forward = lambda s: nsgtf(s, self.g, self.wins, self.nn, self.M, mode=self.mode , device=self.device)
-        sl = slice(0,len(self.g)//2+1)
+        #sl = slice(0,len(self.g)//2+1)
+        sl = slice(1,len(self.g)//2) #getting rig of the DC component and the Nyquist
         self.maxLg_enc = max(int(ceil(float(len(gii))/mii))*mii for mii,gii in zip(self.M[sl], self.g[sl]))
     
         self.loopparams_enc = []
@@ -82,8 +83,37 @@ class CQT_nsgt():
             p = (mii,win_range,Lg,col)
             self.loopparams_enc.append(p)
     
-        ragged_giis = [torch.nn.functional.pad(torch.unsqueeze(gii, dim=0), (0, self.maxLg_enc-gii.shape[0])) for gii in self.g[sl]]
-        self.giis = torch.conj(torch.cat(ragged_giis))
+        def get_ragged_giis(g, wins):
+            #ragged_giis = [torch.nn.functional.pad(torch.unsqueeze(gii, dim=0), (0, self.maxLg_enc-gii.shape[0])) for gii in gd[sl]]
+            ragged_giis=[]
+            c=torch.zeros((len(g),self.Ls//2),dtype=self.dtype,device=self.device)
+            for i,(gii, win_range) in enumerate(zip(g,wins)):
+                gii=torch.fft.fftshift(gii).unsqueeze(0)
+                c[i,win_range]=gii
+
+                #a=torch.unsqueeze(gii, dim=0)
+                #b=torch.nn.functional.pad(a, (0, self.maxLg_enc-gii.shape[0]))
+                #ragged_giis.append(b)
+            return  torch.conj(c)
+
+        def get_ragged_giis_backup(gd):
+            #ragged_giis = [torch.nn.functional.pad(torch.unsqueeze(gii, dim=0), (0, self.maxLg_enc-gii.shape[0])) for gii in gd[sl]]
+            ragged_giis=[]
+            for gii in gd:
+                a=torch.unsqueeze(gii, dim=0)
+                b=torch.nn.functional.pad(a, (0, self.maxLg_enc-gii.shape[0]))
+                ragged_giis.append(b)
+
+            return  torch.conj(torch.cat(ragged_giis))
+
+        if self.mode=="matrix":
+            self.giis=get_ragged_giis(self.g[sl], self.wins[sl])
+            self.giis_2=get_ragged_giis_backup(self.g[sl])
+            print(self.giis.shape, self.giis_2.shape)
+        else:
+            ragged_giis = [torch.nn.functional.pad(torch.unsqueeze(gii, dim=0), (0, self.maxLg_enc-gii.shape[0])) for gii in self.g[sl]]
+
+            self.giis = torch.conj(torch.cat(ragged_giis))
 
         #FORWARD!! this is from nsigtf
         #self.backward = lambda c: nsigtf(c, self.gd, self.wins, self.nn, self.Ls, mode=self.mode,  device=self.device)
@@ -132,14 +162,15 @@ class CQT_nsgt():
             return seq_gdiis
 
         if self.mode=="matrix":
-            self.gdiis = get_ragged_gdiis(self.gd)
-            self.gdiis = self.gdiis[0:(self.gdiis.shape[0]//2 +1)]
+            self.gdiis = get_ragged_gdiis(self.gd[sl])
+            #self.gdiis = self.gdiis[sl]
+            #self.gdiis = self.gdiis[0:(self.gdiis.shape[0]//2 +1)]
         else:
             #elif self.mode=="oct":
             self.gdiis=get_ragged_gdiis_oct(self.gd, self.M[sl])
 
         self.loopparams_dec = []
-        for gdii,win_range in zip(self.gd, self.wins):
+        for gdii,win_range in zip(self.gd[sl], self.wins[sl]):
             Lg = len(gdii)
             wr1 = win_range[:(Lg)//2]
             wr2 = win_range[-((Lg+1)//2):]
@@ -164,6 +195,7 @@ class CQT_nsgt():
 
         ft = torch.fft.fft(f)
     
+        ft=ft[...,:self.Ls//2]
         Ls = f.shape[-1]
 
         assert self.nn == Ls
@@ -171,14 +203,17 @@ class CQT_nsgt():
         if self.mode=="matrix":
             c = torch.zeros(*f.shape[:2], len(self.loopparams_enc), self.maxLg_enc, dtype=ft.dtype, device=torch.device(self.device))
     
+            t=ft.unsqueeze(-2)*self.giis
             for j, (mii,win_range,Lg,col) in enumerate(self.loopparams_enc):
-                t = ft[:, :, win_range]*torch.fft.fftshift(self.giis[j, :Lg]) #this needs to be parllelized!!!
+            #    t = ft[:, :, win_range]*torch.fft.fftshift(self.giis[j, :Lg]) #this needs to be parllelized!!!
+            #    print(win_range)
     
-                sl1 = slice(None,(Lg+1)//2)
-                sl2 = slice(-(Lg//2),None)
+            #    #sl1 = slice(None,(Lg+1)//2)
+            #    #sl2 = slice(-(Lg//2),None)
+                i=win_range[0]
     
-                c[:, :, j, sl1] = t[:, :, Lg//2:]  # if mii is odd, this is of length mii-mii//2
-                c[:, :, j, sl2] = t[:, :, :Lg//2]  # if mii is odd, this is of length mii//2
+                c[:, :, j, :(Lg+1)//2] = t[:, :,j, (i+Lg//2):(i+Lg)]  # if mii is odd, this is of length mii-mii//2
+                c[:, :, j, -(Lg//2):] = t[:, :,j, i:(i+Lg//2)]  # if mii is odd, this is of length mii//2
     
             return torch.fft.ifft(c)
     

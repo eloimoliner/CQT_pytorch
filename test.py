@@ -8,9 +8,12 @@ import soundfile as sf
 import math
 import time
 import glob
+import plotly
 
 from torch.profiler import tensorboard_trace_handler
 import wandb
+
+import plotly.express as px
 
 torch.set_printoptions(linewidth=2000, threshold=170000)
 np.set_printoptions(threshold=sys.maxsize)
@@ -43,11 +46,11 @@ total_steps = (wait + warmup + active) * (1 + repeat)
 schedule =  torch.profiler.schedule(
 wait=wait, warmup=warmup, active=active, repeat=repeat)
 profiler = torch.profiler.profile(
-schedule=schedule, on_trace_ready=tensorboard_trace_handler("wandb/latest-run/tbprofile"), with_stack=False)
+schedule=schedule, on_trace_ready=tensorboard_trace_handler("wandb/latest-run/tbprofile"), profile_memory=True, with_stack=False)
 
 run=wandb.init(project="trace")
 
-for i in range(1000):
+for i in range(100):
     #x=x[...,44100:(44100+Ls)]
     #X=forward(x)
     X=cqt.fwd(x)
@@ -57,6 +60,12 @@ for i in range(1000):
     xrec=cqt.bwd(X)
 
     print((xrec-x).mean())
+    #A=torch.stft(x[0,0], 1024)
+    #Arec=torch.stft(xrec[0,0], 1024)
+    #error=A[:,:,:]-Arec[:,:,:]
+    #Error=torch.sqrt(error[...,1]**2+error[...,0]**2).squeeze(0)
+    #Error=10*torch.log10(Error)
+
     profiler.step()
 
 
