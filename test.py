@@ -60,11 +60,11 @@ for i in range(100):
     xrec=cqt.bwd(X)
 
     print((xrec-x).mean())
-    #A=torch.stft(x[0,0], 1024)
-    #Arec=torch.stft(xrec[0,0], 1024)
-    #error=A[:,:,:]-Arec[:,:,:]
-    #Error=torch.sqrt(error[...,1]**2+error[...,0]**2).squeeze(0)
-    #Error=10*torch.log10(Error)
+    A=torch.stft(x[0,0], 1024)
+    Arec=torch.stft(xrec[0,0], 1024)
+    error=A[:,:,:]-Arec[:,:,:]
+    Error=torch.sqrt(error[...,1]**2+error[...,0]**2).squeeze(0)
+    Error=10*torch.log10(Error)
 
     profiler.step()
 

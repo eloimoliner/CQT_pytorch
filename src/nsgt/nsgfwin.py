@@ -79,7 +79,8 @@ def nsgfwin(f, q, sr, Ls,  min_win=4, Qvar=1, dowarn=True, dtype=np.float64, dev
     # Omega[k] in the paper
     M = np.zeros(fbas.shape, dtype=int)
     M[0] = np.round(2*fbas[1])
-    for k in range(1,2*lbas+1):
+    M[1]= np.round(fbas[3]-fbas[1]) #this is slightly wrong, but should be fine
+    for k in range(2,2*lbas+1):
         M[k] = np.round(fbas[k+1]-fbas[k-1])
     M[-1] = np.round(Ls-fbas[-2])
         
