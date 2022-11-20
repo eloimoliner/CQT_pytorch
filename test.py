@@ -36,7 +36,7 @@ numocts=8
 binsoct=64
 
 Ls=131072 # most efficient one
-cqt=CQT_nsgt(numocts, binsoct, mode="matrix",fs=fs, audio_len=Ls)
+cqt=CQT_nsgt(numocts, binsoct, mode="oct",fs=fs, audio_len=Ls)
 
 x=x[...,0:Ls]
 
