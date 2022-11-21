@@ -181,7 +181,7 @@ class CQT_nsgt():
                 ix[i,wr2]=torch.Tensor([i for i in range(len(wr2))]).to(torch.int64) #the start part
 
                 
-            return torch.conj(torch.cat(ragged_gdiis))*self.maxLg_dec, ix
+            return torch.conj(torch.cat(ragged_gdiis)).to(self.dtype)*self.maxLg_dec, ix
 
         def get_ragged_gdiis_oct(gd, ms, wins):
             seq_gdiis=[]
@@ -197,7 +197,7 @@ class CQT_nsgt():
                     if len(gdii.shape)==1:
                         gdii=gdii.unsqueeze(0)
                     #seq_gdiis.append(gdii[0:gdii.shape[0]//2 +1])
-                    seq_gdiis.append(gdii)
+                    seq_gdiis.append(gdii.to(self.dtype))
                     ragged_gdiis=[]
                     j+=1
                     k=0
@@ -212,12 +212,12 @@ class CQT_nsgt():
 
                 wr1 = win_range[:(Lg)//2]
                 wr2 = win_range[-((Lg+1)//2):]
-                ix[j][k,wr1]=torch.Tensor([self.size_per_oct[j]-(Lg//2)+i for i in range(len(wr1))]).to(torch.int64) #the end part
-                ix[j][k,wr2]=torch.Tensor([i for i in range(len(wr2))]).to(torch.int64) #the start part
+                ix[j][k,wr1]=torch.Tensor([self.size_per_oct[j]-(Lg//2)+i for i in range(len(wr1))]).to(self.device).to(torch.int64) #the end part
+                ix[j][k,wr2]=torch.Tensor([i for i in range(len(wr2))]).to(self.device).to(torch.int64) #the start part
                 k+=1
             
             gdii=torch.conj(torch.cat(ragged_gdiis))
-            seq_gdiis.append(gdii)
+            seq_gdiis.append(gdii.to(self.dtype))
             #seq_gdiis.append(gdii[0:gdii.shape[0]//2 +1])
 
             return seq_gdiis, ix
@@ -229,6 +229,8 @@ class CQT_nsgt():
         else:
             #elif self.mode=="oct":
             self.gdiis, self.idx_dec=get_ragged_gdiis_oct(self.gd[sl], self.M[sl], self.wins[sl])
+            for gdiis in self.gdiis:
+                gdiis.to(self.dtype)
 
         self.loopparams_dec = []
         for gdii,win_range in zip(self.gd[sl], self.wins[sl]):

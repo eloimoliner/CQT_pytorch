@@ -36,9 +36,9 @@ numocts=8
 binsoct=64
 
 Ls=131072 # most efficient one
-cqt=CQT_nsgt(numocts, binsoct, mode="matrix",fs=fs, audio_len=Ls)
+cqt=CQT_nsgt(numocts, binsoct, mode="matrix",fs=fs, audio_len=Ls, dtype=torch.float32)
 
-x=x[...,0:Ls]
+x=x[...,0:Ls].to(torch.float32)
 
 #set profiler
 wait, warmup, active, repeat = 10, 10, 2, 1
