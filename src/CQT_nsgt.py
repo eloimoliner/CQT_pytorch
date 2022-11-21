@@ -75,7 +75,7 @@ class CQT_nsgt():
         #FORWARD!! this is from nsgtf
         #self.forward = lambda s: nsgtf(s, self.g, self.wins, self.nn, self.M, mode=self.mode , device=self.device)
         #sl = slice(0,len(self.g)//2+1)
-        sl = slice(1,len(self.g)//2) #getting rig of the DC component and the Nyquist
+        sl = slice(1,len(self.g)//2) #getting rid of the DC component and the Nyquist
 
         self.maxLg_enc = max(int(ceil(float(len(gii))/mii))*mii for mii,gii in zip(self.M[sl], self.g[sl]))
     
@@ -131,8 +131,6 @@ class CQT_nsgt():
                 #b=torch.nn.functional.pad(a, (0, self.maxLg_enc-gii.shape[0]))
                 #ragged_giis.append(b)
             #dirty unsqueeze
-            for i in range(len(ix_per_oct)):
-                ix_per_oct[i]=ix_per_oct[i].unsqueeze(0).unsqueeze(0)
             return  torch.conj(c), ix_per_oct
 
         def get_ragged_giis_backup(gd):
@@ -147,7 +145,7 @@ class CQT_nsgt():
 
         if self.mode=="matrix":
             self.giis, self.idx_enc=get_ragged_giis(self.g[sl], self.wins[sl])
-            self.idx_enc=self.idx_enc.unsqueeze(0).unsqueeze(0)
+            #self.idx_enc=self.idx_enc.unsqueeze(0).unsqueeze(0)
         elif self.mode=="oct":
             self.giis, self.idx_enc=get_ragged_giis_oct(self.g[sl], self.wins[sl], self.M[sl])
             #self.idx_enc=self.idx_enc.unsqueeze(0).unsqueeze(0)
@@ -183,7 +181,7 @@ class CQT_nsgt():
                 ix[i,wr2]=torch.Tensor([i for i in range(len(wr2))]).to(torch.int64) #the start part
 
                 
-            return torch.conj(torch.cat(ragged_gdiis))*self.maxLg_dec, ix.unsqueeze(0).unsqueeze(0)
+            return torch.conj(torch.cat(ragged_gdiis))*self.maxLg_dec, ix
 
         def get_ragged_gdiis_oct(gd, ms, wins):
             seq_gdiis=[]
@@ -221,8 +219,7 @@ class CQT_nsgt():
             gdii=torch.conj(torch.cat(ragged_gdiis))
             seq_gdiis.append(gdii)
             #seq_gdiis.append(gdii[0:gdii.shape[0]//2 +1])
-            for i in range(len(ix)):
-                ix[i]=ix[i].unsqueeze(0).unsqueeze(0)
+
             return seq_gdiis, ix
 
         if self.mode=="matrix":
@@ -269,8 +266,9 @@ class CQT_nsgt():
     
             t=ft.unsqueeze(-2)*self.giis #this has a lot of rendundant operations and, probably, consumes a lot of memory. Anyways, it is parallelizable, so it is not a big deal, I guess.
             #c=torch.gather(t, 3, self.idx_enc)
+            a=torch.gather(t, 3, self.idx_enc.unsqueeze(0).unsqueeze(0).expand(t.shape[0],t.shape[1],-1,-1)) #To make torch.gather broadcast, I need to add a dimension to the index. 
 
-            return torch.fft.ifft(torch.gather(t, 3, self.idx_enc))
+            return torch.fft.ifft(a)
     
         elif self.mode=="oct": 
             #block_ptr = -1
@@ -283,7 +281,8 @@ class CQT_nsgt():
             for i in range(self.numocts):
                 #c=torch.gather(t[...,i*self.binsoct:(i+1)*self.binsoct,:], 3, self.idx_enc[i]) 
                 #ret.append(torch.fft.ifft(torch.cat(bucketed_tensors,2)))
-                ret.append(torch.fft.ifft(torch.gather(t[...,i*self.binsoct:(i+1)*self.binsoct,:], 3, self.idx_enc[i]) ))
+                a=torch.gather(t[...,i*self.binsoct:(i+1)*self.binsoct,:], 3, self.idx_enc[i].unsqueeze(0).unsqueeze(0).expand(t.shape[0],t.shape[1],-1,-1)) #To make torch.gather broadcast, I need to add a dimension to the index.
+                ret.append(torch.fft.ifft(a))
 
             return ret
         else: 
@@ -354,15 +353,7 @@ class CQT_nsgt():
         #tart=time.time()
         if self.mode=="matrix":
             temp0=fc*self.gdiis.unsqueeze(0).unsqueeze(0)
-            fr=torch.gather(temp0, 3, self.idx_dec).sum(2)
-            #fr=fr.sum(2)
-
-            #for i,(wr1,wr2,Lg) in enumerate(self.loopparams_dec[:fbins]):
-        
-            #    #r = (Lg+1)//2
-            #    #l = (Lg//2)
-            #    fr2[:, :, wr1] += temp0[:,:,i,self.maxLg_dec-(Lg//2):self.maxLg_dec]
-            #    fr2[:, :, wr2] += temp0[:,:,i, :(Lg+1)//2]
+            fr=torch.gather(temp0, 3, self.idx_dec.unsqueeze(0).unsqueeze(0).expand(temp0.shape[0], temp0.shape[1], -1, -1)).sum(2)
         
         elif self.mode=="oct":
             # frequencies are bucketed by same time resolution
@@ -374,7 +365,7 @@ class CQT_nsgt():
                 temp0 = torch.zeros(*cseq_shape[:2],nb_fbins, Lg_outer, dtype=cseq_dtype, device=torch.device(self.device))  # Allocate output
         
                 temp0=fc*gdii_j.unsqueeze(0).unsqueeze(0)
-                fr+=torch.gather(temp0, 3, self.idx_dec[j]).sum(2)
+                fr+=torch.gather(temp0, 3, self.idx_dec[j].unsqueeze(0).unsqueeze(0).expand(temp0.shape[0], temp0.shape[1], -1, -1)).sum(2)
 
         else:
             # frequencies are bucketed by same time resolution

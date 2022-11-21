@@ -29,14 +29,14 @@ a=a.transpose()
 x=torch.Tensor(a)
 #x=torchaudio.functional.resample(x, 44100, 22050)
 
-x=x.unsqueeze(0).repeat(1,1,1)
+x=x.unsqueeze(0).repeat(2,2,1) #simulate batch size of 2 and stereo
 print(x.shape)
 
 numocts=8
 binsoct=64
 
 Ls=131072 # most efficient one
-cqt=CQT_nsgt(numocts, binsoct, mode="oct",fs=fs, audio_len=Ls)
+cqt=CQT_nsgt(numocts, binsoct, mode="matrix",fs=fs, audio_len=Ls)
 
 x=x[...,0:Ls]
 
@@ -48,20 +48,23 @@ wait=wait, warmup=warmup, active=active, repeat=repeat)
 profiler = torch.profiler.profile(
 schedule=schedule, on_trace_ready=tensorboard_trace_handler("wandb/latest-run/tbprofile"), profile_memory=True, with_stack=False)
 
-run=wandb.init(project="trace")
+#run=wandb.init(project="trace")
 
 for i in range(100):
     #x=x[...,44100:(44100+Ls)]
     #X=forward(x)
+    x.requires_grad_()
     X=cqt.fwd(x)
 
     #xrec=backward(X)
     #xrec=nsigtf(X, cqt.gd, cqt.wins, cqt.nn, Ls=Ls, mode=cqt.mode, device=cqt.device)
     xrec=cqt.bwd(X)
 
+    loss=torch.mean(torch.abs(xrec-x))
+    out=torch.autograd.grad(outputs=loss, inputs=x)
     print((xrec-x).mean())
-    A=torch.stft(x[0,0], 1024)
-    Arec=torch.stft(xrec[0,0], 1024)
+    A=torch.stft(x[1,1], 1024)
+    Arec=torch.stft(xrec[1,1], 1024)
     error=A[:,:,:]-Arec[:,:,:]
     Error=torch.sqrt(error[...,1]**2+error[...,0]**2).squeeze(0)
     Error=10*torch.log10(Error)
