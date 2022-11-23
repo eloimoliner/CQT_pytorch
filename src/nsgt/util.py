@@ -14,6 +14,7 @@ AudioMiner project, supported by Vienna Science and Technology Fund (WWTF)
 import numpy as np
 import torch
 from math import exp, floor, ceil, pi
+import scipy.signal
 
 
 def hannwin(l, device="cpu"):
@@ -76,3 +77,29 @@ def calcwinrange(g, rfbas, Ls, device="cpu"):
         
     return wins,nn
 
+
+def tukeywin(n, r, device="cpu"):
+    #design a tukey window of length n with r*100% cosine part
+    g=scipy.signal.windows.tukey(n, alpha=r, sym=True)
+
+    g=torch.tensor(g, dtype=torch.float, device=torch.device(device))
+    return torch.roll(g, n//2)
+
+def cont_tukey_win(n, sl_len, tr_area):
+    g = np.arange(n)*(sl_len/float(n))
+    g[np.logical_or(g < sl_len/4.-tr_area/2., g > 3*sl_len/4.+tr_area/2.)] = 0.
+    g[np.logical_and(g > sl_len/4.+tr_area/2., g < 3*sl_len/4.-tr_area/2.)] = 1.
+    #
+    idxs = np.logical_and(g >= sl_len/4.-tr_area/2., g <= sl_len/4.+tr_area/2.)
+    temp = g[idxs]
+    temp -= sl_len/4.+tr_area/2.
+    temp *= pi/tr_area
+    g[idxs] = np.cos(temp)*0.5+0.5
+    #
+    idxs = np.logical_and(g >= 3*sl_len/4.-tr_area/2., g <= 3*sl_len/4.+tr_area/2.)
+    temp = g[idxs]
+    temp += -3*sl_len/4.+tr_area/2.
+    temp *= pi/tr_area
+    g[idxs] = np.cos(temp)*0.5+0.5
+    #
+    return g

@@ -29,14 +29,14 @@ a=a.transpose()
 x=torch.Tensor(a)
 #x=torchaudio.functional.resample(x, 44100, 22050)
 
-x=x.unsqueeze(0).repeat(2,2,1) #simulate batch size of 2 and stereo
+x=x.unsqueeze(0).repeat(2,1,1) #simulate batch size of 2 and stereo
 print(x.shape)
 
 numocts=8
 binsoct=64
 
 Ls=131072 # most efficient one
-cqt=CQT_nsgt(numocts, binsoct, mode="matrix",fs=fs, audio_len=Ls, dtype=torch.float32)
+cqt=CQT_nsgt(numocts, binsoct, mode="critical",fs=fs, audio_len=Ls, dtype=torch.float32)
 
 x=x[...,0:Ls].to(torch.float32)
 
@@ -49,26 +49,57 @@ profiler = torch.profiler.profile(
 schedule=schedule, on_trace_ready=tensorboard_trace_handler("wandb/latest-run/tbprofile"), profile_memory=True, with_stack=False)
 
 #run=wandb.init(project="trace")
+def apply_low_pass_firwin(y,filter):
+    """
+        Utility for applying a FIR filter, usinf pytorch conv1d
+        Args;
+            y (Tensor): shape (B,T) signal to filter
+            filter (Tensor): shape (1,1,order) FIR filter coefficients
+        Returns:
+            y_lpf (Tensor): shape (B,T) filtered signal
+    """
+
+    #ii=2
+    B=filter.to(y.device)
+    #B=filter
+    #y=y.unsqueeze(1)
+    #weight=torch.nn.Parameter(B)
+    
+    y_lpf=torch.nn.functional.conv1d(y,B,padding="same")
+    #y_lpf=y_lpf.squeeze(1) #some redundancy here, but its ok
+    #y_lpf=y
+    return y_lpf
+
+def process_stft(A):
+    A=torch.sqrt(A[...,1]**2+A[...,0]**2).squeeze(0)
+    A=10*torch.log10(A)
+    fig=px.imshow(A)
+    fig.show()
 
 for i in range(100):
     #x=x[...,44100:(44100+Ls)]
     #X=forward(x)
-    x.requires_grad_()
+    xhpf=cqt.apply_hpf_DC(x)
+
     X=cqt.fwd(x)
 
     #xrec=backward(X)
     #xrec=nsigtf(X, cqt.gd, cqt.wins, cqt.nn, Ls=Ls, mode=cqt.mode, device=cqt.device)
     xrec=cqt.bwd(X)
 
-    loss=torch.mean(torch.abs(xrec-x))
-    out=torch.autograd.grad(outputs=loss, inputs=x)
-    print((xrec-x).mean())
-    A=torch.stft(x[1,1], 1024)
-    Arec=torch.stft(xrec[1,1], 1024)
-    error=A[:,:,:]-Arec[:,:,:]
-    Error=torch.sqrt(error[...,1]**2+error[...,0]**2).squeeze(0)
-    Error=10*torch.log10(Error)
+    error=xrec-x
+    print((xrec-x).sum())
+    print((xrec-xhpf).sum())
+    error_hpf=cqt.apply_hpf_DC(error)
+    print(error_hpf.sum())
 
+    E=torch.stft(error_hpf[1,0],1024)
+    A=torch.stft(x[1,0], 1024)
+    Arec=torch.stft(xrec[1,0], 1024)
+    Ahpf=torch.stft(xhpf[1,0], 1024)
+    error=A[:,:,:]-Arec[:,:,:]
+    process_stft(error)
+    
     profiler.step()
 
 

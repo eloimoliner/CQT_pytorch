@@ -46,6 +46,11 @@ class CQT_nsgt():
         self.frqs,self.q = self.scale() 
 
         self.g,rfbas,self.M = nsgfwin(self.frqs, self.q, self.fs, self.Ls, dtype=self.dtype, device=self.device, min_win=4)
+        Hhpf=torch.zeros(self.Ls, dtype=self.dtype, device=self.device)
+        Hhpf[0:len(self.g[0])//2]=self.g[0][:len(self.g[0])//2]
+        Hhpf[-len(self.g[0])//2:]=self.g[0][len(self.g[0])//2:]
+        self.Hhpf=1-Hhpf
+
 
         sl = slice(0,len(self.g)//2+1)
 
@@ -75,7 +80,10 @@ class CQT_nsgt():
         #FORWARD!! this is from nsgtf
         #self.forward = lambda s: nsgtf(s, self.g, self.wins, self.nn, self.M, mode=self.mode , device=self.device)
         #sl = slice(0,len(self.g)//2+1)
-        sl = slice(1,len(self.g)//2) #getting rid of the DC component and the Nyquist
+        if mode!="critical":
+            sl = slice(1,len(self.g)//2) #getting rid of the DC component and the Nyquist
+        else:
+            sl = slice(0,len(self.g)//2+1)
 
         self.maxLg_enc = max(int(ceil(float(len(gii))/mii))*mii for mii,gii in zip(self.M[sl], self.g[sl]))
     
@@ -90,7 +98,11 @@ class CQT_nsgt():
     
         def get_ragged_giis(g, wins):
             #ragged_giis = [torch.nn.functional.pad(torch.unsqueeze(gii, dim=0), (0, self.maxLg_enc-gii.shape[0])) for gii in gd[sl]]
-            c=torch.zeros((len(g),self.Ls//2),dtype=self.dtype,device=self.device)
+            if self.mode!="critical":
+                c=torch.zeros((len(g),self.Ls//2),dtype=self.dtype,device=self.device)
+            else:
+                c=torch.zeros((len(g),self.Ls),dtype=self.dtype,device=self.device)
+
             ix=torch.zeros((len(g),self.maxLg_enc),dtype=torch.int64,device=self.device)
             for i,(gii, win_range) in enumerate(zip(g,wins)):
                 gii=torch.fft.fftshift(gii).unsqueeze(0)
@@ -133,15 +145,6 @@ class CQT_nsgt():
             #dirty unsqueeze
             return  torch.conj(c), ix_per_oct
 
-        def get_ragged_giis_backup(gd):
-            #ragged_giis = [torch.nn.functional.pad(torch.unsqueeze(gii, dim=0), (0, self.maxLg_enc-gii.shape[0])) for gii in gd[sl]]
-            ragged_giis=[]
-            for gii in gd:
-                a=torch.unsqueeze(gii, dim=0)
-                b=torch.nn.functional.pad(a, (0, self.maxLg_enc-gii.shape[0]))
-                ragged_giis.append(b)
-
-            return  torch.conj(torch.cat(ragged_giis))
 
         if self.mode=="matrix":
             self.giis, self.idx_enc=get_ragged_giis(self.g[sl], self.wins[sl])
@@ -150,7 +153,8 @@ class CQT_nsgt():
             self.giis, self.idx_enc=get_ragged_giis_oct(self.g[sl], self.wins[sl], self.M[sl])
             #self.idx_enc=self.idx_enc.unsqueeze(0).unsqueeze(0)
         else:
-            self.giis, self.idx_enc=get_ragged_giis(self.g[sl], self.wins[sl])
+            ragged_giis = [torch.nn.functional.pad(torch.unsqueeze(gii, dim=0), (0, self.maxLg_enc-gii.shape[0])) for gii in self.g[sl]]
+            self.giis = torch.conj(torch.cat(ragged_giis))
             #ragged_giis = [torch.nn.functional.pad(torch.unsqueeze(gii, dim=0), (0, self.maxLg_enc-gii.shape[0])) for gii in self.g[sl]]
 
             #self.giis = torch.conj(torch.cat(ragged_giis))
@@ -183,12 +187,39 @@ class CQT_nsgt():
                 
             return torch.conj(torch.cat(ragged_gdiis)).to(self.dtype)*self.maxLg_dec, ix
 
+        def get_ragged_gdiis_critical(gd, ms):
+            seq_gdiis=[]
+            ragged_gdiis=[]
+            mprev=-1
+            for i,(g,m) in enumerate(zip(gd, ms)):
+                if i>0 and m!=mprev:
+                    gdii=torch.conj(torch.cat(ragged_gdiis))
+                    if len(gdii.shape)==1:
+                        gdii=gdii.unsqueeze(0)
+                    #seq_gdiis.append(gdii[0:gdii.shape[0]//2 +1])
+                    seq_gdiis.append(gdii)
+                    ragged_gdiis=[]
+                    
+                Lg=g.shape[0]
+                gl=g[:(Lg+1)//2]
+                gr=g[(Lg+1)//2:]
+                zeros = torch.zeros(m-Lg ,dtype=g.dtype, device=g.device)  # pre-allocation
+                paddedg=torch.cat((gl, zeros, gr),0).unsqueeze(0)*m
+                ragged_gdiis.append(paddedg)
+                mprev=m
+            
+            gdii=torch.conj(torch.cat(ragged_gdiis))
+            seq_gdiis.append(gdii)
+            #seq_gdiis.append(gdii[0:gdii.shape[0]//2 +1])
+            return seq_gdiis
+
         def get_ragged_gdiis_oct(gd, ms, wins):
             seq_gdiis=[]
             ragged_gdiis=[]
             mprev=-1
             j=0
             ix=[torch.zeros((self.binsoct,self.Ls//2+1),dtype=torch.int64,device=self.device)+self.size_per_oct[j]//2 for j in range(len(self.size_per_oct))]
+            
             #I nitialize the index with the center to make sure that it points to a 0
             k=0
             for i,(g,m, win_range) in enumerate(zip(gd, ms, wins)):
@@ -226,11 +257,12 @@ class CQT_nsgt():
             self.gdiis, self.idx_dec= get_ragged_gdiis(self.gd[sl], self.wins[sl])
             #self.gdiis = self.gdiis[sl]
             #self.gdiis = self.gdiis[0:(self.gdiis.shape[0]//2 +1)]
-        else:
-            #elif self.mode=="oct":
+        elif self.mode=="oct":
             self.gdiis, self.idx_dec=get_ragged_gdiis_oct(self.gd[sl], self.M[sl], self.wins[sl])
             for gdiis in self.gdiis:
                 gdiis.to(self.dtype)
+        else:
+            self.gdiis =get_ragged_gdiis_critical(self.gd[sl], self.M[sl])
 
         self.loopparams_dec = []
         for gdii,win_range in zip(self.gd[sl], self.wins[sl]):
@@ -239,6 +271,11 @@ class CQT_nsgt():
             wr2 = win_range[-((Lg+1)//2):]
             p = (wr1,wr2,Lg)
             self.loopparams_dec.append(p)
+
+    def apply_hpf_DC(self, x):
+        X=torch.fft.fft(x)
+        X=X*self.Hhpf
+        return torch.fft.ifft(X).real
 
 
     def nsgtf(self,f):
@@ -258,12 +295,12 @@ class CQT_nsgt():
 
         ft = torch.fft.fft(f)
     
-        ft=ft[...,:self.Ls//2]
         Ls = f.shape[-1]
 
         assert self.nn == Ls
     
         if self.mode=="matrix":
+            ft=ft[...,:self.Ls//2]
             #c = torch.zeros(*f.shape[:2], len(self.loopparams_enc), self.maxLg_enc, dtype=ft.dtype, device=torch.device(self.device))
     
             t=ft.unsqueeze(-2)*self.giis #this has a lot of rendundant operations and, probably, consumes a lot of memory. Anyways, it is parallelizable, so it is not a big deal, I guess.
@@ -273,6 +310,7 @@ class CQT_nsgt():
             return torch.fft.ifft(a)
     
         elif self.mode=="oct": 
+            ft=ft[...,:self.Ls//2]
             #block_ptr = -1
             #bucketed_tensors = []
             ret = []
@@ -292,19 +330,17 @@ class CQT_nsgt():
             bucketed_tensors = []
             ret = []
         
-            t=ft.unsqueeze(-2)*self.giis #this has a lot of rendundant operations and, probably, consumes a lot of memory. Anyways, it is parallelizable, so it is not a big deal, I guess.
-
             for j, (mii,win_range,Lg,col) in enumerate(self.loopparams_enc):
 
                 c = torch.zeros(*f.shape[:2], 1, mii, dtype=ft.dtype, device=torch.device(self.device))
         
-                #t = ft[:, :, win_range]*torch.fft.fftshift(self.giis[j, :Lg]) #this needs to be parallelized!
-                i=win_range[0]
+                t = ft[:, :, win_range]*torch.fft.fftshift(self.giis[j, :Lg]) #this needs to be parallelized!
         
-                #c[:, :, 0, :(Lg+1)//2] = t[:, :, Lg//2:]  # if mii is odd, this is of length mii-mii//2
-                #c[:, :, 0, -(Lg//2):] = t[:, :, :Lg//2]  # if mii is odd, this is of length mii//2
-                c[:, :, 0, :(Lg+1)//2] = t[:, :,j, (i+Lg//2):(i+Lg)]  # if mii is odd, this is of length mii-mii//2
-                c[:, :, 0, -(Lg//2):] = t[:, :,j, i:(i+Lg//2)]  # if mii is odd, this is of length mii//2
+                sl1 = slice(None,(Lg+1)//2)
+                sl2 = slice(-(Lg//2),None)
+        
+                c[:, :, 0, sl1] = t[:, :, Lg//2:]  # if mii is odd, this is of length mii-mii//2
+                c[:, :, 0, sl2] = t[:, :, :Lg//2]  # if mii is odd, this is of length mii//2
         
                 # start a new block
                 if block_ptr == -1 or bucketed_tensors[block_ptr][0].shape[-1] != mii:
@@ -314,7 +350,7 @@ class CQT_nsgt():
                     # concat block to previous contiguous frequency block with same time resolution
                     bucketed_tensors[block_ptr] = torch.cat([bucketed_tensors[block_ptr], c], dim=2)
         
-            #bucket-wise ifft
+            # bucket-wise ifft
             for bucketed_tensor in bucketed_tensors:
                 ret.append(torch.fft.ifft(bucketed_tensor))
         
@@ -347,17 +383,18 @@ class CQT_nsgt():
             fc = torch.fft.fft(cseq)
         
         fbins = cseq_shape[2]
-        fr = torch.zeros(*cseq_shape[:2], self.nn//2+1, dtype=cseq_dtype, device=torch.device(self.device))  # Allocate output
         #temp0 = torch.empty(*cseq_shape[:2], self.maxLg_dec, dtype=fr.dtype, device=torch.device(self.device))  # pre-allocation
         
         
         # The overlap-add procedure including multiplication with the synthesis windows
         #tart=time.time()
         if self.mode=="matrix":
+            fr = torch.zeros(*cseq_shape[:2], self.nn//2+1, dtype=cseq_dtype, device=torch.device(self.device))  # Allocate output
             temp0=fc*self.gdiis.unsqueeze(0).unsqueeze(0)
             fr=torch.gather(temp0, 3, self.idx_dec.unsqueeze(0).unsqueeze(0).expand(temp0.shape[0], temp0.shape[1], -1, -1)).sum(2)
         
         elif self.mode=="oct":
+            fr = torch.zeros(*cseq_shape[:2], self.nn//2+1, dtype=cseq_dtype, device=torch.device(self.device))  # Allocate output
             # frequencies are bucketed by same time resolution
             fbin_ptr = 0
             for j, (fc, gdii_j) in enumerate(zip(cseq, self.gdiis)):
@@ -370,7 +407,9 @@ class CQT_nsgt():
                 fr+=torch.gather(temp0, 3, self.idx_dec[j].unsqueeze(0).unsqueeze(0).expand(temp0.shape[0], temp0.shape[1], -1, -1)).sum(2)
 
         else:
+            # speed uniefficient but save mode
             # frequencies are bucketed by same time resolution
+            fr = torch.zeros(*cseq_shape[:2], self.nn, dtype=cseq_dtype, device=torch.device(self.device))  # Allocate output
             fbin_ptr = 0
             for j, (fc, gdii_j) in enumerate(zip(cseq, self.gdiis)):
                 Lg_outer = fc.shape[-1]
@@ -379,7 +418,6 @@ class CQT_nsgt():
                 temp0 = torch.zeros(*cseq_shape[:2],nb_fbins, Lg_outer, dtype=cseq_dtype, device=torch.device(self.device))  # Allocate output
         
                 temp0=fc*gdii_j.unsqueeze(0).unsqueeze(0)
-
 
                 for i,(wr1,wr2,Lg) in enumerate(self.loopparams_dec[fbin_ptr:fbin_ptr+nb_fbins][:fbins]):
                     r = (Lg+1)//2

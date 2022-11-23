@@ -35,7 +35,7 @@ EXTERNALS : firwin
 """
 
 import numpy as np
-from .util import hannwin
+from .util import hannwin, tukeywin
 from math import ceil
 from warnings import warn
 from itertools import chain
@@ -76,32 +76,29 @@ def nsgfwin(f, q, sr, Ls,  min_win=4, Qvar=1, dowarn=True, dtype=np.float64, dev
     
     fbas *= float(Ls)/sr
     
-    #Omega[k] in the paper
-    #M2 = np.zeros(fbas.shape, dtype=int)
-    #M2[0] = np.round(2*fbas[1])
-    #M2[1]= np.round(fbas[3]-fbas[1]) #this is slightly wrong, but should be fine
-    #for k in range(2,2*lbas+1):
-    #    M2[k] = np.round(fbas[k+1]-fbas[k-1])
-    #M2[-1] = np.round(Ls-fbas[-2])
-
+    # Omega[k] in the paper
     M = np.zeros(fbas.shape, dtype=int)
     M[0] = np.round(2*fbas[1])
-    Q=fbas[5]/(fbas[6]-fbas[4]) #get Q factor from some point in the middle
-    for k in range(1,lbas):
-        #define M[k] according to the Q factor
-        M[k] = np.round(fbas[k]/Q)
-    M[lbas]=np.round(fbas[lbas+1]-fbas[lbas-1]) #the one before nyquist is a bit different because there is not enough space for the Q factor
-    M[lbas+1]=np.round(fbas[lbas+2]-fbas[lbas]) #the one in nyquist will be 0 anyway, we will discard it later
-    M[lbas+2:]=M[lbas:0:-1]
+    #M[1]=
+    M[1] = np.round(fbas[1]/q[0])
+    for k in range(2,lbas+1):
+        #M[k] = np.round(fbas[k]/q[k-1])
+        M[k]= np.round(fbas[k+1]-fbas[k-1]) #this is nyq!
+        #M[k] =
+    #M[lbas]=np.round(fbas[lbas]/q[-1])
+    M[lbas+1]= np.round(fbas[k+1]-fbas[k-1]) #this is nyq!
+    M[lbas+2:]=M[lbas:0:-1] #symmetry!
+    
     #M[-1] = np.round(Ls-fbas[-2])
         
-    np.clip(M, min_win, np.inf, out=M) #I wonder if this is necessary
+    np.clip(M, min_win, np.inf, out=M)
 
     
     g = [hannwin(m, device=device).to(dtype) for m in M]
+    g[0]=tukeywin(M[0], 0.6, device=device).to(dtype)
     
-    fbas[lbas] = (fbas[lbas-1]+fbas[lbas+1])/2 #what is this for? Maybe to make the center of the last window be the center of the last frequency?
-    #fbas[lbas+2] = Ls-fbas[lbas]
+    fbas[lbas] = (fbas[lbas-1]+fbas[lbas+1])/2
+    fbas[lbas+2] = Ls-fbas[lbas]
     rfbas = np.round(fbas).astype(int)
         
 
