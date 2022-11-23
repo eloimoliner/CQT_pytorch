@@ -32,11 +32,13 @@ x=torch.Tensor(a)
 x=x.unsqueeze(0).repeat(2,1,1) #simulate batch size of 2 and stereo
 print(x.shape)
 
-numocts=8
+numocts=9 
 binsoct=64
 
+#oct fails whe numocts=7, binsoct=64
+
 Ls=131072 # most efficient one
-cqt=CQT_nsgt(numocts, binsoct, mode="critical",fs=fs, audio_len=Ls, dtype=torch.float32)
+cqt=CQT_nsgt(numocts, binsoct, mode="oct",fs=fs, audio_len=Ls, dtype=torch.float32)
 
 x=x[...,0:Ls].to(torch.float32)
 
@@ -81,26 +83,34 @@ for i in range(100):
     #X=forward(x)
     xhpf=cqt.apply_hpf_DC(x)
 
+    xlpf=cqt.apply_lpf_DC(x)
+
     X=cqt.fwd(x)
+    #X[0]=X[0]*0
+    #X[-1]=X[-1]*0
 
     #xrec=backward(X)
     #xrec=nsigtf(X, cqt.gd, cqt.wins, cqt.nn, Ls=Ls, mode=cqt.mode, device=cqt.device)
     xrec=cqt.bwd(X)
 
-    error=xrec-x
-    print((xrec-x).sum())
-    print((xrec-xhpf).sum())
-    error_hpf=cqt.apply_hpf_DC(error)
-    print(error_hpf.sum())
+    print("all error",(xrec-x).abs().sum())
+    print("error respect xhpf",(xrec-xhpf).abs().sum())
+    print("error corrected with xlpf",(xrec+xlpf-x).abs().sum())
+    error_hpf=cqt.apply_hpf_DC(xrec-x)
+    print("filtered error",error_hpf.abs().sum())
+    #print(error_hpf.abs().sum())
 
-    E=torch.stft(error_hpf[1,0],1024)
-    A=torch.stft(x[1,0], 1024)
+    E=torch.stft((xrec+xlpf-x)[1,0],1024)
+    AA=torch.stft(x[1,0], 1024)
     Arec=torch.stft(xrec[1,0], 1024)
     Ahpf=torch.stft(xhpf[1,0], 1024)
-    error=A[:,:,:]-Arec[:,:,:]
-    process_stft(error)
+    Alpf=torch.stft(xlpf[1,0], 1024)
+    EE=torch.stft(error_hpf[1,0], 1024)
+    error=AA[:,:,:]-Arec[:,:,:]
+    process_stft(EE)
     
     profiler.step()
+    
 
 
 profile_art = wandb.Artifact(f"trace-{wandb.run.id}", type="profile")

@@ -46,10 +46,7 @@ class CQT_nsgt():
         self.frqs,self.q = self.scale() 
 
         self.g,rfbas,self.M = nsgfwin(self.frqs, self.q, self.fs, self.Ls, dtype=self.dtype, device=self.device, min_win=4)
-        Hhpf=torch.zeros(self.Ls, dtype=self.dtype, device=self.device)
-        Hhpf[0:len(self.g[0])//2]=self.g[0][:len(self.g[0])//2]
-        Hhpf[-len(self.g[0])//2:]=self.g[0][len(self.g[0])//2:]
-        self.Hhpf=1-Hhpf
+
 
 
         sl = slice(0,len(self.g)//2+1)
@@ -74,8 +71,28 @@ class CQT_nsgt():
         # calculate shifts
         self.wins,self.nn = calcwinrange(self.g, rfbas, self.Ls, device=self.device)
         # calculate dual windows
-        self.gd = nsdual(self.g, self.wins, self.nn, self.M, device=self.device)
+        self.gd = nsdual(self.g, self.wins, self.nn, self.M, dtype=self.dtype, device=self.device)
 
+        #filter DC
+        self.Hlpf=torch.zeros(self.Ls, dtype=self.dtype, device=self.device)
+        self.Hlpf[0:len(self.g[0])//2]=self.g[0][:len(self.g[0])//2]*self.gd[0][:len(self.g[0])//2]*self.M[0]
+        self.Hlpf[-len(self.g[0])//2:]=self.g[0][len(self.g[0])//2:]*self.gd[0][len(self.g[0])//2:]*self.M[0]
+        #filter nyquist
+        nyquist_idx=len(self.g)//2
+        Lg=len(self.g[nyquist_idx])
+        self.Hlpf[self.wins[nyquist_idx][0:(Lg+1)//2]]+=self.g[nyquist_idx][(Lg)//2:]*self.gd[nyquist_idx][(Lg)//2:]*self.M[nyquist_idx]
+        self.Hlpf[self.wins[nyquist_idx][-(Lg-1)//2:]]+=self.g[nyquist_idx][:(Lg)//2]*self.gd[nyquist_idx][:(Lg)//2]*self.M[nyquist_idx]
+
+        #nyquist_idx=len(self.g)//2-1
+        #Lg=len(self.g[nyquist_idx])
+        #self.Hlpf[self.wins[nyquist_idx][0:(Lg+1)//2]]+=self.g[nyquist_idx][(Lg)//2:]*self.gd[nyquist_idx][(Lg)//2:]*self.M[nyquist_idx]
+        #self.Hlpf[self.wins[nyquist_idx][-(Lg-1)//2:]]+=self.g[nyquist_idx][:(Lg)//2]*self.gd[nyquist_idx][:(Lg)//2]*self.M[nyquist_idx]
+
+        #nyquist_idx=len(self.g)//2+1
+        #Lg=len(self.g[nyquist_idx])
+        #self.Hlpf[self.wins[nyquist_idx][0:(Lg+1)//2]]+=self.g[nyquist_idx][(Lg)//2:]*self.gd[nyquist_idx][(Lg)//2:]*self.M[nyquist_idx]
+        #self.Hlpf[self.wins[nyquist_idx][-(Lg-1)//2:]]+=self.g[nyquist_idx][:(Lg)//2]*self.gd[nyquist_idx][:(Lg)//2]*self.M[nyquist_idx]
+        self.Hhpf=1-self.Hlpf
 
         #FORWARD!! this is from nsgtf
         #self.forward = lambda s: nsgtf(s, self.g, self.wins, self.nn, self.M, mode=self.mode , device=self.device)
@@ -274,7 +291,12 @@ class CQT_nsgt():
 
     def apply_hpf_DC(self, x):
         X=torch.fft.fft(x)
-        X=X*self.Hhpf
+        X=X*torch.conj(self.Hhpf)
+        return torch.fft.ifft(X).real
+
+    def apply_lpf_DC(self, x):
+        X=torch.fft.fft(x)
+        X=X*torch.conj(self.Hlpf)
         return torch.fft.ifft(X).real
 
 

@@ -95,7 +95,7 @@ def nsgfwin(f, q, sr, Ls,  min_win=4, Qvar=1, dowarn=True, dtype=np.float64, dev
 
     
     g = [hannwin(m, device=device).to(dtype) for m in M]
-    g[0]=tukeywin(M[0], 0.6, device=device).to(dtype)
+    #g[0]=tukeywin(M[0], 0.2, device=device).to(dtype)
     
     fbas[lbas] = (fbas[lbas-1]+fbas[lbas+1])/2
     fbas[lbas+2] = Ls-fbas[lbas]
