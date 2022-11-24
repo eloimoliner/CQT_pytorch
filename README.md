@@ -1,5 +1,6 @@
 # CQT_pytorch
 
+Pytorch implementation of the invertible CQT based on Non-stationary Gabor filters
 
 ## Install
 
