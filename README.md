@@ -10,7 +10,7 @@ pip install cqt-nsgt-pytorch
 ```py
 from cqt_nsgt_pytorch import CQT_nsgt
 ```
-##TODO
+## TODO
 - [ ] On "matrix" mode, give the option to output also the DC and Nyq. Same in "oct" mode. Document how this disacrding thing is implemented.
 - [ ] Test it for mixed precision. problems with powers of 2, etc. Maybe this will require zero padding...
 - [ ] Make the apply_hpf_DC() and apply_lpf_DC() more handy and clear. Document the usage of those.
