@@ -38,7 +38,7 @@ binsoct=64
 #oct fails whe numocts=7, binsoct=64
 
 Ls=131072 # most efficient one
-cqt=CQT_nsgt(numocts, binsoct, mode="oct",fs=fs, audio_len=Ls, dtype=torch.float32)
+cqt=CQT_nsgt(numocts, binsoct, mode="critical",fs=fs, audio_len=Ls, dtype=torch.float32)
 
 x=x[...,0:Ls].to(torch.float32)
 
@@ -78,6 +78,12 @@ def process_stft(A):
     fig=px.imshow(A)
     fig.show()
 
+def plot_cqt(A):
+    A=A.abs().squeeze(0)
+    A=10*torch.log10(A)
+    fig=px.imshow(A)
+    fig.show()
+
 for i in range(100):
     #x=x[...,44100:(44100+Ls)]
     #X=forward(x)
@@ -88,6 +94,7 @@ for i in range(100):
     X=cqt.fwd(x)
     #X[0]=X[0]*0
     #X[-1]=X[-1]*0
+    #plot_cqt(X[1,0])
 
     #xrec=backward(X)
     #xrec=nsigtf(X, cqt.gd, cqt.wins, cqt.nn, Ls=Ls, mode=cqt.mode, device=cqt.device)
@@ -96,18 +103,18 @@ for i in range(100):
     print("all error",(xrec-x).abs().sum())
     print("error respect xhpf",(xrec-xhpf).abs().sum())
     print("error corrected with xlpf",(xrec+xlpf-x).abs().sum())
-    error_hpf=cqt.apply_hpf_DC(xrec-x)
-    print("filtered error",error_hpf.abs().sum())
+    #error_hpf=cqt.apply_hpf_DC(xrec-x)
+    #print("filtered error",error_hpf.abs().sum())
     #print(error_hpf.abs().sum())
 
-    E=torch.stft((xrec+xlpf-x)[1,0],1024)
+    E=torch.stft((xrec-x)[1,0],1024)
     AA=torch.stft(x[1,0], 1024)
     Arec=torch.stft(xrec[1,0], 1024)
     Ahpf=torch.stft(xhpf[1,0], 1024)
     Alpf=torch.stft(xlpf[1,0], 1024)
-    EE=torch.stft(error_hpf[1,0], 1024)
-    error=AA[:,:,:]-Arec[:,:,:]
-    process_stft(EE)
+    #EE=torch.stft(error_hpf[1,0], 1024)
+    #error=AA[:,:,:]-Arec[:,:,:]
+    process_stft(E)
     
     profiler.step()
     
