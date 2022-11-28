@@ -1,6 +1,8 @@
 # CQT_pytorch
 
-Pytorch implementation of the invertible CQT based on Non-stationary Gabor filters
+Pytorch implementation of the invertible CQT based on Non-stationary Gabor filters.
+
+The transform has perfect reconstruction, is differentiable and GPU-efficient.
 
 ## Install
 
