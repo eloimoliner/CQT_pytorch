@@ -26,6 +26,10 @@ X=cqt.fwd(audio)# forward transform
 audio_reconstructed=cqt.bwd(X) #backward transform
 
 ```
+## Modes of operation
+
+Different versions of the transform are implemented. They can be selected by choosing the 'mode' parameter. Except "matrix" and "oct, that discard DC and Nyquist bands, the rest have perfect reconstruction.
+
 mode          | Description  |  Output shape
 ------------- | ------------- | -------------
 "critical"      | (default) critical sampling (no redundancy) (slow implementation) |  list of tensors, each with different time resolution 
@@ -36,7 +40,7 @@ mode          | Description  |  Output shape
 "oct_complete" | Same as above, but DC and Nyquist are included | list of tensors, one per octave band,DC and Nyquist, each with a different time resolution
 
 
-## Modes of operation
+
 ## TODO
 - [x] On "matrix" mode, give the option to output also the DC and Nyq. Same in "oct" mode. Document how this disacrding thing is implemented.
 - [ ] Test it for mixed precision. problems with powers of 2, etc. Maybe this will require zero padding...
