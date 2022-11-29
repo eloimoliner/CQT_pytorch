@@ -211,13 +211,13 @@ class CQT_nsgt():
                 wr2 = win_range[-((Lg+1)//2):]
                 if mode=="matrix_complete" and i==0:
                     #ix[i,wr1]=torch.Tensor([self.maxLg_dec-(Lg//2)+i for i in range(len(wr1))]).to(torch.int64) #the end part
-                    ix[i,wr2]=torch.Tensor([i for i in range(len(wr2))]).to(torch.int64) #the start part
+                    ix[i,wr2]=torch.Tensor([i for i in range(len(wr2))]).to(torch.int64).to(self.device) #the start part
                 elif mode=="matrix_complete" and i==len(gd)-1:
-                    ix[i,wr1]=torch.Tensor([self.maxLg_dec-(Lg//2)+i for i in range(len(wr1))]).to(torch.int64) #the end part
+                    ix[i,wr1]=torch.Tensor([self.maxLg_dec-(Lg//2)+i for i in range(len(wr1))]).to(torch.int64).to(self.device) #the end part
                     #ix[i,wr2]=torch.Tensor([i for i in range(len(wr2))]).to(torch.int64) #the start part
                 else:
-                    ix[i,wr1]=torch.Tensor([self.maxLg_dec-(Lg//2)+i for i in range(len(wr1))]).to(torch.int64) #the end part
-                    ix[i,wr2]=torch.Tensor([i for i in range(len(wr2))]).to(torch.int64) #the start part
+                    ix[i,wr1]=torch.Tensor([self.maxLg_dec-(Lg//2)+i for i in range(len(wr1))]).to(torch.int64).to(self.device) #the end part
+                    ix[i,wr2]=torch.Tensor([i for i in range(len(wr2))]).to(torch.int64).to(self.device) #the start part
 
                 
             return torch.conj(torch.cat(ragged_gdiis)).to(self.dtype)*self.maxLg_dec, ix
