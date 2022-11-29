@@ -19,7 +19,7 @@ binsoct=64
 fs=44100 
 Ls=131072 
 
-cqt=CQT_nsgt(numocts, binsoct, mode="matrix_complete",fs=fs, audio_len=Ls, dtype=torch.float32)
+cqt=CQT_nsgt(numocts, binsoct, mode="matrix_complete",fs=fs, audio_len=Ls, device="cuda", dtype=torch.float32)
 
 audio=#load some audio file
 
