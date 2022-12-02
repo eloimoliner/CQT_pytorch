@@ -25,6 +25,20 @@ def hannwin(l, device="cpu"):
     r *= 0.5
     return r
 
+#design a kaiser window
+def kaiserwin(l, beta, device="cpu"):
+    beta=torch.tensor(beta, dtype=float, device=torch.device(device))
+    r = torch.arange(l,dtype=float, device=torch.device(device))
+    r *= np.pi*2./l
+    r = torch.cos(r)
+    r += 1.
+    r *= 0.5
+    r = torch.sqrt(r)
+    r = torch.i0(beta*torch.sqrt(1.-r**2))/(2.*torch.i0(beta))
+    r=torch.roll(r, l//2)
+    return r
+
+
 
 #alternative windows!! maybe could be interesting to switch to get better time or freq resolution, who knows...
 def blackharr(n, l=None, mod=True, device="cpu"):

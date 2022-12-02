@@ -14,7 +14,7 @@ def next_power_of_2(x):
     return 1 if x == 0 else 2**math.ceil(math.log2(x))
 
 class CQT_nsgt():
-    def __init__(self,numocts, binsoct, mode="critical",fs=44100, audio_len=44100, device="cpu", dtype=torch.float32):
+    def __init__(self,numocts, binsoct,  mode="critical", window="hann",fs=44100, audio_len=44100, device="cpu", dtype=torch.float32):
         """
             args:
                 numocts (int) number of octaves
@@ -49,7 +49,7 @@ class CQT_nsgt():
 
         self.frqs,self.q = self.scale() 
 
-        self.g,rfbas,self.M = nsgfwin(self.frqs, self.q, self.fs, self.Ls, dtype=self.dtype, device=self.device, min_win=4)
+        self.g,rfbas,self.M = nsgfwin(self.frqs, self.q, self.fs, self.Ls, dtype=self.dtype, device=self.device, min_win=4, window=window)
 
 
 

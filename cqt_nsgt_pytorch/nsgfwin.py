@@ -35,14 +35,14 @@ EXTERNALS : firwin
 """
 
 import numpy as np
-from .util import hannwin
+from .util import hannwin, blackharr, kaiserwin
 from math import ceil
 from warnings import warn
 from itertools import chain
 #import torch
 
 
-def nsgfwin(f, q, sr, Ls,  min_win=4, Qvar=1, dowarn=True, dtype=np.float64, device="cpu"):
+def nsgfwin(f, q, sr, Ls,  min_win=4, Qvar=1, dowarn=True, dtype=np.float64, device="cpu", window="hann"):
     nf = sr/2.
 
     lim = np.argmax(f > 0)
@@ -94,7 +94,17 @@ def nsgfwin(f, q, sr, Ls,  min_win=4, Qvar=1, dowarn=True, dtype=np.float64, dev
     np.clip(M, min_win, np.inf, out=M)
 
     
-    g = [hannwin(m, device=device).to(dtype) for m in M]
+    if window=="hann":
+        print("using a hann window")
+        g = [hannwin(m, device=device).to(dtype) for m in M]
+    elif window=="blackharr":
+        print("using a blackharr window")
+        g = [blackharr(m, device=device).to(dtype) for m in M]
+    elif window[0]=="kaiser":
+        print("using a kaiser window with beta=",window[1])
+        str, beta= window
+        g = [kaiserwin(m,beta, device=device).to(dtype) for m in M]
+
     #g[0]=tukeywin(M[0], 0.2, device=device).to(dtype)
     
     fbas[lbas] = (fbas[lbas-1]+fbas[lbas+1])/2
