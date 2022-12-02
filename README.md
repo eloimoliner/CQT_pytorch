@@ -2,7 +2,7 @@
 
 Pytorch implementation of the invertible CQT based on Non-stationary Gabor filters.
 
-The transform has perfect reconstruction, is differentiable and GPU-efficient.
+The transform has near-perfect reconstruction, is differentiable and GPU-efficient.
 
 ## Install
 
@@ -21,10 +21,10 @@ Ls=131072
 
 cqt=CQT_nsgt(numocts, binsoct, mode="matrix_complete",fs=fs, audio_len=Ls, device="cuda", dtype=torch.float32)
 
-audio=#load some audio file
+audio=#load some audio file shape=[Batch, channels, time]
 
 X=cqt.fwd(audio)# forward transform
-
+#X.shape=[batch, channels, frequency, time]
 audio_reconstructed=cqt.bwd(X) #backward transform
 
 ```
