@@ -71,13 +71,6 @@ class CQT_nsgt():
 
         elif mode=="oct" or mode=="oct_complete":
             #round uo all the lengths of an octave to the next power of 2
-            if time_reductions is None:
-                time_reductions=[]
-                for i in range(numocts):
-                    time_reductions.append(2)
-            else:
-                assert len(time_reductions)==numocts, "time_reductions must have the same length as numocts"
-
             self.size_per_oct=[]
             idx=1
             for i in range(numocts):
