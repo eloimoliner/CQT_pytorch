@@ -1,7 +1,7 @@
 import torch 
 #from src.nsgt.cq  import NSGT
 
-from .fscale  import LogScale 
+from .fscale  import LogScale , FlexLogOctScale
 
 from .nsgfwin import nsgfwin
 from .nsdual import nsdual
@@ -13,16 +13,19 @@ from math import ceil
 def next_power_of_2(x):
     return 1 if x == 0 else 2**math.ceil(math.log2(x))
 
+
+
 class CQT_nsgt():
-    def __init__(self,numocts, binsoct,  mode="critical", window="hann",fs=44100, audio_len=44100, device="cpu", dtype=torch.float32):
+    def __init__(self,numocts, binsoct,  mode="critical", window="hann", flex_Q=None, fs=44100, audio_len=44100, device="cpu", dtype=torch.float32):
         """
             args:
                 numocts (int) number of octaves
-                binsoct (int) number of bins per octave
+                binsoct (int) number of bins per octave. Can be a list if mode="flex_oct"
                 mode (string) defines the mode of operation:
                      "critical": (default) critical sampling (no redundancy) returns a list of tensors, each with different time resolution (slow implementation)
                      "critical_fast": notimplemented
                      "matrix": returns a 2d-matrix maximum redundancy (discards DC and Nyquist)
+                     "matrix_pow2": returns a 2d-matrix maximum redundancy (discards DC and Nyquist) (time-resolution is rounded up to a power of 2)
                      "matrix_complete": returns a 2d-matrix maximum redundancy (with DC and Nyquist)
                      "matrix_slow": returns a 2d-matrix maximum redundancy (slow implementation)
                      "oct": octave-wise rasterization ( modearate redundancy) returns a list of tensors, each from a different octave with different time resolution (discards DC and Nyquist)
@@ -40,7 +43,11 @@ class CQT_nsgt():
         self.numocts=numocts
         self.binsoct=binsoct
        
-        self.scale = LogScale(fmin, fmax, fbins)
+        if mode=="flex_oct":
+            self.scale = FlexLogOctScale(fs, self.numocts, self.binsoct, time_reductions)
+        else:
+            self.scale = LogScale(fmin, fmax, fbins)
+
         self.fs=fs
 
         self.device=torch.device(device)
@@ -51,8 +58,6 @@ class CQT_nsgt():
 
         self.g,rfbas,self.M = nsgfwin(self.frqs, self.q, self.fs, self.Ls, dtype=self.dtype, device=self.device, min_win=4, window=window)
 
-
-
         sl = slice(0,len(self.g)//2+1)
 
         # coefficients per slice
@@ -60,17 +65,30 @@ class CQT_nsgt():
         if mode=="matrix" or mode=="matrix_complete" or mode=="matrix_slow":
             #just use the maximum resolution everywhere
             self.M[:] = self.M.max()
+        elif mode=="matrix_pow2":
+            self.size_per_oct=[]
+            self.M[:]=next_power_of_2(self.M.max())
+
         elif mode=="oct" or mode=="oct_complete":
             #round uo all the lengths of an octave to the next power of 2
+            if time_reductions is None:
+                time_reductions=[]
+                for i in range(numocts):
+                    time_reductions.append(2)
+            else:
+                assert len(time_reductions)==numocts, "time_reductions must have the same length as numocts"
+
             self.size_per_oct=[]
             idx=1
             for i in range(numocts):
                 value=next_power_of_2(self.M[idx:idx+binsoct].max())
+
                 #value=M[idx:idx+binsoct].max()
                 self.size_per_oct.append(value)
                 self.M[idx:idx+binsoct]=value
                 self.M[-idx-binsoct:-idx]=value
                 idx+=binsoct
+
 
         # calculate shifts
         self.wins,self.nn = calcwinrange(self.g, rfbas, self.Ls, device=self.device)
@@ -92,7 +110,7 @@ class CQT_nsgt():
         #FORWARD!! this is from nsgtf
         #self.forward = lambda s: nsgtf(s, self.g, self.wins, self.nn, self.M, mode=self.mode , device=self.device)
         #sl = slice(0,len(self.g)//2+1)
-        if mode=="matrix" or mode=="oct":
+        if mode=="matrix" or mode=="oct" or mode=="matrix_pow2":
             sl = slice(1,len(self.g)//2) #getting rid of the DC component and the Nyquist
         else:
             sl = slice(0,len(self.g)//2+1)
@@ -117,7 +135,7 @@ class CQT_nsgt():
             if mode=="oct":
                 for i in range(self.numocts):
                     ix.append(torch.zeros((self.binsoct,self.size_per_oct[i]),dtype=torch.int64,device=self.device))
-            elif mode=="matrix":
+            elif mode=="matrix" or mode=="matrix_pow2":
                 ix.append(torch.zeros((len(g),self.maxLg_enc),dtype=torch.int64,device=self.device))
 
             elif mode=="oct_complete" or mode=="matrix_complete":
@@ -171,7 +189,7 @@ class CQT_nsgt():
             return  torch.conj(c), ix
 
 
-        if self.mode=="matrix" or self.mode=="matrix_complete":
+        if self.mode=="matrix" or self.mode=="matrix_complete" or self.mode=="matrix_pow2":
             self.giis, self.idx_enc=get_ragged_giis(self.g[sl], self.wins[sl], self.M[sl],self.mode)
             #self.idx_enc=self.idx_enc[0]
             #self.idx_enc=self.idx_enc.unsqueeze(0).unsqueeze(0)
@@ -191,12 +209,15 @@ class CQT_nsgt():
         #self.backward = lambda c: nsigtf(c, self.gd, self.wins, self.nn, self.Ls, mode=self.mode,  device=self.device)
 
         self.maxLg_dec = max(len(gdii) for gdii in self.gd)
-        print(self.maxLg_enc, self.maxLg_dec)
+        if self.mode=="matrix_pow2":
+            self.maxLg_dec=self.maxLg_enc
+        #self.maxLg_dec=self.maxLg_enc
+        #print(self.maxLg_enc, self.maxLg_dec)
        
         #ragged_gdiis = [torch.nn.functional.pad(torch.unsqueeze(gdii, dim=0), (0, self.maxLg_dec-gdii.shape[0])) for gdii in self.gd]
         #self.gdiis = torch.conj(torch.cat(ragged_gdiis))
 
-        def get_ragged_gdiis(gd, wins, mode):
+        def get_ragged_gdiis(gd, wins, mode, ms=None):
             ragged_gdiis=[]
             ix=torch.zeros((len(gd),self.Ls//2+1),dtype=torch.int64,device=self.device)+self.maxLg_dec//2#I initialize the index with the center to make sure that it points to a 0
             for i,(g, win_range) in enumerate(zip(gd, wins)):
@@ -311,6 +332,8 @@ class CQT_nsgt():
             self.gdiis, self.idx_dec= get_ragged_gdiis(self.gd[sl], self.wins[sl], self.mode)
             #self.gdiis = self.gdiis[sl]
             #self.gdiis = self.gdiis[0:(self.gdiis.shape[0]//2 +1)]
+        elif self.mode=="matrix_pow2":
+            self.gdiis, self.idx_dec= get_ragged_gdiis(self.gd[sl], self.wins[sl], self.mode, ms=self.M[sl])
         elif self.mode=="oct" or self.mode=="oct_complete":
             self.gdiis, self.idx_dec=get_ragged_gdiis_oct(self.gd[sl], self.M[sl], self.wins[sl], self.mode)
             for gdiis in self.gdiis:
@@ -362,7 +385,7 @@ class CQT_nsgt():
 
         assert self.nn == Ls
     
-        if self.mode=="matrix":
+        if self.mode=="matrix" or self.mode=="matrix_pow2":
             ft=ft[...,:self.Ls//2+1]
             #c = torch.zeros(*f.shape[:2], len(self.loopparams_enc), self.maxLg_enc, dtype=ft.dtype, device=torch.device(self.device))
     
@@ -499,7 +522,7 @@ class CQT_nsgt():
         """
 
 
-        if self.mode!="matrix" and self.mode!="matrix_slow" and self.mode!="matrix_complete":
+        if self.mode!="matrix" and self.mode!="matrix_slow" and self.mode!="matrix_complete" and self.mode!="matrix_pow2":
             #print(cseq)
             assert type(cseq) == list
             nfreqs = 0
@@ -543,7 +566,7 @@ class CQT_nsgt():
                 fr[:, :, wr1] += t2
                 fr[:, :, wr2] += t1
 
-        elif self.mode=="matrix" or self.mode=="matrix_complete":
+        elif self.mode=="matrix" or self.mode=="matrix_complete" or self.mode=="matrix_pow2":
             fr = torch.zeros(*cseq_shape[:2], self.nn//2+1, dtype=cseq_dtype, device=torch.device(self.device))  # Allocate output
             temp0=fc*self.gdiis.unsqueeze(0).unsqueeze(0)
             fr=torch.gather(temp0, 3, self.idx_dec.unsqueeze(0).unsqueeze(0).expand(temp0.shape[0], temp0.shape[1], -1, -1)).sum(2)

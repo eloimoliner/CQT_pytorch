@@ -74,3 +74,51 @@ class LogScale(Scale):
     def Q(self, bnd=None):
         return self.q
 
+class FlexLogOctScale():
+    def __init__(self, fs, numocts, binsoct, flex_Q):
+        """
+        @param fmin: minimum frequency (Hz)
+        @param fmax: maximum frequency (Hz)
+        @param bnds: number of frequency bands (int)
+        @param beyond: number of frequency bands below fmin and above fmax (int)
+        """
+        fmax=fs/2
+        fmin=fmax/(2**numocts)
+
+        self.bnds=0
+        for i in range(numocts):
+            self.bnds+=binsoct[i]
+
+        lfmin = np.log2(fmin)
+        lfmax = np.log2(fmax)
+
+        odiv = (lfmax-lfmin)/(bnds-1)
+        lfmin_ = lfmin-odiv*beyond
+        lfmax_ = lfmax+odiv*beyond
+        self.fmin = 2**lfmin_
+        self.fmax = 2**lfmax_
+        self.pow2n = 2**odiv
+        self.q = np.sqrt(self.pow2n)/(self.pow2n-1.)/2.
+
+        self.bnds=bnds #number of frequency bands
+        
+    def F(self, bnd=None):
+        return self.fmin*self.pow2n**(bnd if bnd is not None else np.arange(self.bnds))
+    
+    def Q(self, bnd=None):
+        return self.q
+
+    def Q(self, bnd=None):
+        # numerical differentiation (if self.Q not defined by sub-class)
+        if bnd is None:
+            bnd = np.arange(self.bnds)
+        return self.F(bnd)*self.dbnd/(self.F(bnd+self.dbnd)-self.F(bnd-self.dbnd))
+    
+    def __call__(self):
+        f = np.array([self.F(b) for b in range(self.bnds)],dtype=float)
+        q = np.array([self.Q(b) for b in range(self.bnds)],dtype=float)
+        return f,q
+
+
+
+
