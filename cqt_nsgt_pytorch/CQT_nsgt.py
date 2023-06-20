@@ -358,7 +358,7 @@ class CQT_nsgt():
         X=X*torch.conj(self.Hhpf)
         out= torch.fft.ifft(X).real
         if Lin<self.Ls:
-            out=out[:, :Lin]
+            out=out[..., :Lin]
         return out
 
 
@@ -373,7 +373,7 @@ class CQT_nsgt():
         X=X*torch.conj(self.Hlpf)
         out= torch.fft.ifft(X).real
         if Lin<self.Ls:
-            out=out[:, :Lin]
+            out=out[..., :Lin]
         return out
 
 
