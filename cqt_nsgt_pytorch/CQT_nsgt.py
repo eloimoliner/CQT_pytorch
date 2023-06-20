@@ -347,14 +347,34 @@ class CQT_nsgt():
             self.loopparams_dec.append(p)
 
     def apply_hpf_DC(self, x):
+        Lin=x.shape[-1]
+        if Lin<self.Ls:
+            #pad zeros
+            x=torch.nn.functional.pad(x, (0, self.Ls-Lin))
+        elif Lin> self.Ls:
+            raise ValueError("Input signal is longer than the maximum length. I could have patched it, but I didn't. sorry :(")
+
         X=torch.fft.fft(x)
         X=X*torch.conj(self.Hhpf)
-        return torch.fft.ifft(X).real
+        out= torch.fft.ifft(X).real
+        if Lin<self.Ls:
+            out=out[:, :Lin]
+        return out
+
 
     def apply_lpf_DC(self, x):
+        Lin=x.shape[-1]
+        if Lin<self.Ls:
+            #pad zeros
+            x=torch.nn.functional.pad(x, (0, self.Ls-Lin))
+        elif Lin> self.Ls:
+            raise ValueError("Input signal is longer than the maximum length. I could have patched it, but I didn't. sorry :(")
         X=torch.fft.fft(x)
         X=X*torch.conj(self.Hlpf)
-        return torch.fft.ifft(X).real
+        out= torch.fft.ifft(X).real
+        if Lin<self.Ls:
+            out=out[:, :Lin]
+        return out
 
 
     def nsgtf(self,f):
