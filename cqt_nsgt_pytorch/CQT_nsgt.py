@@ -189,6 +189,14 @@ class CQT_nsgt():
         elif self.mode=="oct" or self.mode=="oct_complete":
             self.giis, self.idx_enc=get_ragged_giis(self.g[sl], self.wins[sl], self.M[sl], self.mode)
             #self.idx_enc=self.idx_enc.unsqueeze(0).unsqueeze(0)
+            if self.mode=="oct":
+                #pregather each octave window at the encode indices so the forward can gather then multiply
+                #over each band support instead of multiplying the full half spectrum for every band
+                #giis_oct[i] is [binsoct, M_i] and gives the same result as gather(ft*giis)
+                self.giis_oct = [
+                    torch.gather(self.giis[i*self.binsoct:(i+1)*self.binsoct, :], 1, self.idx_enc[i])
+                    for i in range(self.numocts)
+                ]
         elif self.mode=="critical" or self.mode=="matrix_slow":
             #self.giis, self.idx_enc=get_ragged_giis(self.g[sl], self.wins[sl], self.M[sl], self.mode)
             
@@ -346,6 +354,28 @@ class CQT_nsgt():
             p = (wr1,wr2,Lg)
             self.loopparams_dec.append(p)
 
+        if self.mode=="oct":
+            #precompute per octave the output position that each padded dual window column scatters to
+            #this replaces the dense gather(temp0, idx_dec).sum (which also breaks on mps for complex)
+            #with one scatter_add over each band support. the zero middle columns map to position 0 and
+            #add exactly 0 since gdii is zero there, so they do nothing. same mapping as the overlap add
+            #reference, cols [0,r) go to wr2 and cols [Lo-l,Lo) go to wr1
+            self.scatter_pos = []
+            for j in range(self.numocts):
+                Lo = int(self.size_per_oct[j])
+                bands = self.loopparams_dec[j*self.binsoct:(j+1)*self.binsoct]
+                pos = torch.zeros((len(bands), Lo), dtype=torch.int64, device=self.device)
+                for k,(wr1,wr2,Lg) in enumerate(bands):
+                    r = (Lg+1)//2  #gl length goes to wr2
+                    l = Lg//2      #gr length goes to wr1
+                    pos[k, :r] = wr2
+                    if l>0:
+                        pos[k, Lo-l:Lo] = wr1
+                self.scatter_pos.append(pos)
+            #flat index over all octaves so the inverse can overlap add with one index_add
+            #(single index_add beats per octave scatter_add and a sparse matmul on gpu, bit identical)
+            self.scatter_pos_flat = torch.cat([p.reshape(-1) for p in self.scatter_pos])
+
     def apply_hpf_DC(self, x):
         Lin=x.shape[-1]
         if Lin<self.Ls:
@@ -392,12 +422,19 @@ class CQT_nsgt():
         """
         
 
-        ft = torch.fft.fft(f)
-    
         Ls = f.shape[-1]
 
         assert self.nn == Ls
-    
+
+        #half spectrum modes only use ft[..., :Ls//2+1] and for real input rfft gives exactly that,
+        #about 2x cheaper and half the memory with the same values as fft()[:half]. critical and
+        #matrix_slow index ft with wraparound indices into negative freqs so they need the full spectrum
+        _half = self.mode in ("matrix","matrix_pow2","oct","matrix_complete","oct_complete")
+        if _half and not f.is_complex():
+            ft = torch.fft.rfft(f)
+        else:
+            ft = torch.fft.fft(f)
+
         if self.mode=="matrix" or self.mode=="matrix_pow2":
             ft=ft[...,:self.Ls//2+1]
             #c = torch.zeros(*f.shape[:2], len(self.loopparams_enc), self.maxLg_enc, dtype=ft.dtype, device=torch.device(self.device))
@@ -410,19 +447,13 @@ class CQT_nsgt():
 
             return torch.fft.ifft(a)
     
-        elif self.mode=="oct": 
+        elif self.mode=="oct":
             ft=ft[...,:self.Ls//2 +1]
-            #block_ptr = -1
-            #bucketed_tensors = []
             ret = []
-            #ret2 = []
-        
-            t=ft.unsqueeze(-2)*self.giis #this has a lot of rendundant operations and, probably, consumes a lot of memory. Anyways, it is parallelizable, so it is not a big deal, I guess.
-
+            #gather each octave spectral support directly to [B,C,binsoct,M_i] with advanced indexing
+            #then multiply by the pregathered window. never builds the dense [B,C,all_bands,Ls/2+1] tensor
             for i in range(self.numocts):
-                #c=torch.gather(t[...,i*self.binsoct:(i+1)*self.binsoct,:], 3, self.idx_enc[i]) 
-                #ret.append(torch.fft.ifft(torch.cat(bucketed_tensors,2)))
-                a=torch.gather(t[...,i*self.binsoct:(i+1)*self.binsoct,:], 3, self.idx_enc[i].unsqueeze(0).unsqueeze(0).expand(t.shape[0],t.shape[1],-1,-1)) #To make torch.gather broadcast, I need to add a dimension to the index.
+                a = ft[..., self.idx_enc[i]] * self.giis_oct[i]
                 ret.append(torch.fft.ifft(a))
 
             return ret
@@ -584,16 +615,26 @@ class CQT_nsgt():
             temp0=fc*self.gdiis.unsqueeze(0).unsqueeze(0)
             fr=torch.gather(temp0, 3, self.idx_dec.unsqueeze(0).unsqueeze(0).expand(temp0.shape[0], temp0.shape[1], -1, -1)).sum(2)
 
-        elif self.mode=="oct" or self.mode=="oct_complete":
+        elif self.mode=="oct":
+            #overlap add every octave support into the output spectrum with ONE index_add instead of
+            #a per octave atomic scatter or a dense gather then sum. real and imag added apart so it also
+            #runs on mps, which has no complex scatter. measured fastest on cuda and bit identical
+            B_, C_ = cseq_shape[:2]
+            src = torch.cat([(fc * g.unsqueeze(0).unsqueeze(0)).reshape(B_, C_, -1)
+                             for fc, g in zip(cseq, self.gdiis)], dim=-1)  #[B,C,total]
+            fr = torch.zeros(B_, C_, self.nn//2+1, dtype=cseq_dtype, device=torch.device(self.device))
+            torch.view_as_real(fr).index_add_(2, self.scatter_pos_flat, torch.view_as_real(src))
+
+        elif self.mode=="oct_complete":
             fr = torch.zeros(*cseq_shape[:2], self.nn//2+1, dtype=cseq_dtype, device=torch.device(self.device))  # Allocate output
             # frequencies are bucketed by same time resolution
             fbin_ptr = 0
             for j, (fc, gdii_j) in enumerate(zip(cseq, self.gdiis)):
                 Lg_outer = fc.shape[-1]
-        
+
                 nb_fbins = fc.shape[2]
                 temp0 = torch.zeros(*cseq_shape[:2],nb_fbins, Lg_outer, dtype=cseq_dtype, device=torch.device(self.device))  # Allocate output
-        
+
                 temp0=fc*gdii_j.unsqueeze(0).unsqueeze(0)
                 fr+=torch.gather(temp0, 3, self.idx_dec[j].unsqueeze(0).unsqueeze(0).expand(temp0.shape[0], temp0.shape[1], -1, -1)).sum(2)
 
@@ -630,10 +671,23 @@ class CQT_nsgt():
         """
             x: [B,C,T]
         """
-        c = self.nsgtf(x)
+        #torch.fft has no fp16 or bf16, so run the transform in self.dtype with autocast off.
+        #the complex output keeps its complex dtype, cast it to your training dtype afterwards
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            if x.is_floating_point() and x.dtype not in (torch.float32, torch.float64):
+                x = x.to(self.dtype)
+            c = self.nsgtf(x)
         return c
 
     def bwd(self,c):
-        s = self.nsigtf(c) #messing out with the channels agains...
+        #inverse, same autocast off handling as fwd
+        def _up(t):
+            if torch.is_tensor(t) and t.is_complex() and t.dtype == torch.complex32:
+                return t.to(torch.complex64)
+            return t
+        c = [_up(t) for t in c] if isinstance(c, list) else _up(c)
+        dev = (c[0] if isinstance(c, list) else c).device
+        with torch.autocast(device_type=dev.type, enabled=False):
+            s = self.nsigtf(c) #messing out with the channels agains...
         return s
 
