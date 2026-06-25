@@ -91,7 +91,7 @@ def nsgfwin(f, q, sr, Ls,  min_win=4, Qvar=1, dowarn=True, dtype=np.float64, dev
     
     #M[-1] = np.round(Ls-fbas[-2])
         
-    np.clip(M, min_win, np.inf, out=M)
+    np.clip(M, min_win, None, out=M)  #numpy 2 cant cast inf into an int array so no upper bound
 
     
     if window=="hann":

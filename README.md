@@ -43,12 +43,43 @@ mode          | Description  |  Output shape
 
 
 
+## Performance (`oct` mode)
+
+`oct` avoids materialising the dense `[batch, channels, all_bins, Ls/2+1]` intermediate: the
+forward gathers each octave's spectral support directly and the inverse overlap-adds with a
+single `index_add`, so peak memory stays flat in batch size.
+
+Tesla T4, `numocts=8, binsoct=32, fs=44100, Ls=262144`, batch 4:
+
+| stage      | time    |
+| ---------- | ------- |
+| forward    | ~1.0 ms |
+| inverse    | ~2.0 ms |
+| round trip | ~2.9 ms |
+| peak memory | ~0.5 GB |
+
+Absolute times vary by GPU; the FFTs are the floor.
+
+## Mixed precision
+
+`torch.fft` does not support fp16/bf16, so the transform always runs internally in its real
+float dtype (`float32`/`float64`) with autocast disabled. You can therefore call it safely
+inside a `torch.autocast` region. keep the CQT in float32 and let autocast handle the
+surrounding network.
+
+```py
+with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+    X = cqt.fwd(audio.float())   # CQT stays fp32; cast its complex output as needed
+```
+
+NumPy 2.x and Apple Silicon (MPS) are supported.
+
 ## TODO
 - [x] On "matrix" mode, give the option to output also the DC and Nyq. Same in "oct" mode. Document how this disacrding thing is implemented.
 - [ ] Do some proper documentation
-- [ ] Test it for mixed precision. problems with powers of 2, etc. Maybe this will require zero padding...
+- [x] Test it for mixed precision. The transform runs in fp32 internally and is safe to call inside `torch.autocast` (see Mixed precision).
 - [ ] Make the apply_hpf_DC() and apply_lpf_DC() more handy and clear. Document the usage of those.
 - [ ] Accelerate the "critical" mode, similar method as in "oct" could also apply. (update: seems a bit tricky memory-wise)
 - [ ] Clean the whole __init__() method as now it is a mess. 
-- [ ] Report the efficiency of the implementation in GPU. (time and frequency). Briefly: It is fast as everything is vectorized but maybe consumes too much memory, specially on the backward pass.
+- [x] Report the efficiency of the implementation in GPU. (time and frequency). See Performance (`oct` mode).
 - [x] Check if there is more redundancy to get rid of. Apparently, there is not

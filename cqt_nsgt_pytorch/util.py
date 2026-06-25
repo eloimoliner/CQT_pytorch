@@ -17,8 +17,12 @@ from math import exp, floor, ceil, pi
 #import scipy.signal
 
 
+def _win_dtype(device):
+    #mps has no float64 and windows get cast to the target dtype anyway, so float32 on mps is harmless
+    return torch.float32 if torch.device(device).type == "mps" else torch.float64
+
 def hannwin(l, device="cpu"):
-    r = torch.arange(l,dtype=float, device=torch.device(device))
+    r = torch.arange(l,dtype=_win_dtype(device), device=torch.device(device))
     r *= np.pi*2./l
     r = torch.cos(r)
     r += 1.
@@ -27,8 +31,9 @@ def hannwin(l, device="cpu"):
 
 #design a kaiser window
 def kaiserwin(l, beta, device="cpu"):
-    beta=torch.tensor(beta, dtype=float, device=torch.device(device))
-    r = torch.arange(l,dtype=float, device=torch.device(device))
+    _dt = _win_dtype(device)
+    beta=torch.tensor(beta, dtype=_dt, device=torch.device(device))
+    r = torch.arange(l,dtype=_dt, device=torch.device(device))
     r *= np.pi*2./l
     r = torch.cos(r)
     r += 1.
