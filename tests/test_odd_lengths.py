@@ -37,11 +37,10 @@ sys.path.insert(0, REPO_ROOT)
 from cqt_nsgt_pytorch import CQT_nsgt
 
 FS = 44100
-# White noise (flat spectrum) exposes the transform's float32 noise floor far more
-# than musical signals: even-DC configs that always worked give ~55-73 dB on noise
-# (vs ~90-115 dB on music). A broken transform lands near 0-20 dB, so 40 dB cleanly
-# separates "working" from "broken" without false alarms.
-MIN_SNR = 40.0
+# Since the Nyquist-bin fix the transform is precision-limited: white noise round
+# trips at 113-128 dB in float32. Gate well below that but far above any real
+# defect (a dropped band lands at ~50-60 dB, broken indexing near 0-20 dB).
+MIN_SNR = 90.0
 # (Ls, numocts) pairs whose DC filter length is odd — all crashed before the fix
 CASES = [(525312, 10), (400000, 7), (400000, 9), (400000, 10),
          (300000, 5), (300000, 6), (300000, 10)]

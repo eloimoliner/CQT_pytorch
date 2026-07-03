@@ -174,9 +174,14 @@ class CQT_nsgt():
                         #equals Lg//2 and behavior is unchanged.
                         ix[j][0,-(Lg//2):]=torch.flip(win_range[(Lg+1)//2:].unsqueeze(0),(-1,))
                     if i==len(g)-1:
-                        c[i,win_range[:(Lg+1)//2]]=gii[...,:(Lg+1)//2]
+                        #place taps -Lg//2..0 on bins N-Lg//2..N so the peak sits on the Nyquist
+                        #bin itself (win_range[Lg//2] is N for both parities)
+                        c[i,win_range[:Lg//2+1]]=gii[...,:Lg//2+1]
 
-                        ix[j][0,:(Lg+1)//2]=torch.flip(win_range[:(Lg+1)//2].unsqueeze(0),(-1,)) #rethink this
+                        #head = band freqs 0,+1,..: position p gathers bin N-p (true mirror,
+                        #conjugated in fwd). For odd Lg the slice starts at win_range[0]; for
+                        #even Lg it starts one later so the flip still ends on bin N.
+                        ix[j][0,:(Lg+1)//2]=torch.flip(win_range[(Lg+1)%2:Lg//2+1].unsqueeze(0),(-1,))
                         ix[j][0,-(Lg//2):]=win_range[:(Lg)//2].unsqueeze(0)
                 else:
                     c[i,win_range]=gii 
@@ -246,7 +251,9 @@ class CQT_nsgt():
                     ix[i,wr2]=torch.Tensor([i for i in range(len(wr2))]).to(torch.int64).to(self.device) #the start part
                 elif mode=="matrix_complete" and i==len(gd)-1:
                     ix[i,wr1]=torch.Tensor([self.maxLg_dec-(Lg//2)+i for i in range(len(wr1))]).to(torch.int64).to(self.device) #the end part
-                    #ix[i,wr2]=torch.Tensor([i for i in range(len(wr2))]).to(torch.int64) #the start part
+                    #the Nyquist bin N (=win_range[Lg//2]) reads band position 0 (the dual
+                    #window's peak); without this the bin is dropped and H(Nyquist)=0
+                    ix[i,win_range[Lg//2]]=0
                 else:
                     ix[i,wr1]=torch.Tensor([self.maxLg_dec-(Lg//2)+i for i in range(len(wr1))]).to(torch.int64).to(self.device) #the end part
                     ix[i,wr2]=torch.Tensor([i for i in range(len(wr2))]).to(torch.int64).to(self.device) #the start part
@@ -322,9 +329,10 @@ class CQT_nsgt():
                     #ix[i,wr2]=torch.Tensor([i for i in range(len(wr2))]).to(torch.int64) #the start part
                     ix[0][k,wr2]=torch.Tensor([i for i in range(len(wr2))]).to(self.device).to(torch.int64) #the start part
                 elif mode=="oct_complete" and i==len(gd)-1:
-                    #ix[i,wr1]=torch.Tensor([self.maxLg_dec-(Lg//2)+i for i in range(len(wr1))]).to(torch.int64) #the end part
                     ix[-1][k,wr1]=torch.Tensor([m-(Lg//2)+i for i in range(len(wr1))]).to(self.device).to(torch.int64) #the end part
-                    #ix[i,wr2]=torch.Tensor([i for i in range(len(wr2))]).to(torch.int64) #the start part
+                    #the Nyquist bin N (=win_range[Lg//2]) reads band position 0 (the dual
+                    #window's peak); without this the bin is dropped and H(Nyquist)=0
+                    ix[-1][k,win_range[Lg//2]]=0
                 else:
                     #ix[i,wr1]=torch.Tensor([self.maxLg_dec-(Lg//2)+i for i in range(len(wr1))]).to(torch.int64) #the end part
                     #ix[i,wr2]=torch.Tensor([i for i in range(len(wr2))]).to(torch.int64) #the start part
