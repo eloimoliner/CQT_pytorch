@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# local example audio + generated plots (not tracked; drop wavs into audio_examples/ to run tests)
+audio_examples/

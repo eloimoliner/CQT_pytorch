@@ -38,15 +38,21 @@ class CQT_nsgt():
         fmax=fs/2 -10**-6 #the maximum frequency is Nyquist
         self.Ls=audio_len #the length is given
 
+        # fmin sits exactly `numocts` octaves below Nyquist, and bins are spaced at
+        # exactly 1/binsoct octave. The grid fmin*2**(k/binsoct) hits Nyquist exactly
+        # at k=numocts*binsoct, so the separately-added Nyquist band lands on the grid
+        # and the numocts*binsoct log bins fill fmin .. one step below Nyquist. Net:
+        # exactly `numocts` octaves of coverage with exactly `binsoct` bins/octave.
         fmin=fmax/(2**numocts)
-        fbins=int(binsoct*numocts) 
+        fbins=int(binsoct*numocts)
+        fmax_grid=fmin*(2**(numocts - 1.0/binsoct))  # top log bin, 1/binsoct octave below Nyquist
         self.numocts=numocts
         self.binsoct=binsoct
-       
+
         if mode=="flex_oct":
             self.scale = FlexLogOctScale(fs, self.numocts, self.binsoct, time_reductions)
         else:
-            self.scale = LogScale(fmin, fmax, fbins)
+            self.scale = LogScale(fmin, fmax_grid, fbins)
 
         self.fs=fs
 
