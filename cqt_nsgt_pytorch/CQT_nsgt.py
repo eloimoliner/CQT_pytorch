@@ -168,7 +168,11 @@ class CQT_nsgt():
                         c[i,win_range[Lg//2:]]=gii[...,Lg//2:]
 
                         ix[j][0,:(Lg+1)//2]=win_range[Lg//2:].unsqueeze(0)
-                        ix[j][0,-(Lg//2):]=torch.flip(win_range[Lg//2:].unsqueeze(0),(-1,))
+                        #mirrored tail = the band's Lg//2 negative freqs, gathered from positive bins
+                        #and conjugated in fwd. (Lg+1)//2 keeps the source one entry shorter than the
+                        #head when Lg is odd (skipping the center bin) so sizes match; for even Lg it
+                        #equals Lg//2 and behavior is unchanged.
+                        ix[j][0,-(Lg//2):]=torch.flip(win_range[(Lg+1)//2:].unsqueeze(0),(-1,))
                     if i==len(g)-1:
                         c[i,win_range[:(Lg+1)//2]]=gii[...,:(Lg+1)//2]
 
