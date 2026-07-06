@@ -291,6 +291,18 @@ class CQT_nsgt():
                     torch.gather(self.giis[self.oct_offsets[i]:self.oct_offsets[i+1], :], 1, self.idx_enc[i])
                     for i in range(self.numocts)
                 ]
+            elif self.mode=="oct_complete":
+                #same gather-then-multiply trick, with DC (band 0), each octave, and Nyquist (last band)
+                #pregathered separately -- the forward does ft[...,idx]*giis_pregathered per group instead
+                #of building the dense [B,C,all_bands,Ls/2+1] product (gather commutes with the multiply).
+                #idx_enc for oct_complete is [DC, oct_0..oct_{N-1}, Nyquist]; DC/Nyquist supports get part
+                #conjugated in the forward (they carry no mirrored frequencies).
+                self.giis_oc_dc = torch.gather(self.giis[0:1, :], 1, self.idx_enc[0])
+                self.giis_oc = [
+                    torch.gather(self.giis[self.oct_offsets[i]+1:self.oct_offsets[i+1]+1, :], 1, self.idx_enc[i+1])
+                    for i in range(self.numocts)
+                ]
+                self.giis_oc_nyq = torch.gather(self.giis[-1:, :], 1, self.idx_enc[-1])
 
         #FORWARD!! this is from nsigtf
         #self.backward = lambda c: nsigtf(c, self.gd, self.wins, self.nn, self.Ls, mode=self.mode,  device=self.device)
@@ -465,6 +477,27 @@ class CQT_nsgt():
                     pos[k, Lo-l:Lo] = wr1
             self.scatter_pos_mat = pos.reshape(-1)
 
+        if self.mode=="oct_complete":
+            #per bucket (DC / each octave / Nyquist) invert idx_dec (out_bin -> column) into
+            #(column -> out_bin), so the inverse overlap-adds with ONE index_add instead of the
+            #per-bucket dense gather(temp0,idx_dec).sum. Same inversion+mask trick as matrix_complete:
+            #columns the gather never reads (DC mirrored tail, Nyquist mirrored head) are masked to 0
+            #so they don't leak into bin 0. Bucket shapes differ, so masks are kept per-bucket and the
+            #inverted positions are concatenated into one flat index.
+            half = self.nn//2+1
+            self.scatter_mask_oc = []
+            pos_flat = []
+            for j, idxj in enumerate(self.idx_dec):
+                nb_j = idxj.shape[0]; Lg_j = self.gdiis[j].shape[-1]
+                pos = torch.zeros((nb_j, Lg_j), dtype=torch.int64, device=self.device)
+                mask = torch.zeros((nb_j, Lg_j), dtype=self.dtype, device=self.device)
+                outbins = torch.arange(half, device=self.device).unsqueeze(0).expand(nb_j, -1)
+                pos.scatter_(1, idxj, outbins)
+                mask.scatter_(1, idxj, torch.ones_like(outbins, dtype=self.dtype))
+                pos_flat.append(pos.reshape(-1))
+                self.scatter_mask_oc.append(mask.unsqueeze(0).unsqueeze(0))   # [1,1,nb_j,Lg_j]
+            self.scatter_pos_oc_flat = torch.cat(pos_flat)
+
         if self.mode=="matrix_complete":
             #build the scatter by INVERTING idx_dec (out_bin -> band column) into
             #(band column -> out_bin), so the inverse overlap-adds with one index_add instead of
@@ -598,30 +631,23 @@ class CQT_nsgt():
                 ret.append(torch.fft.ifft(a))
 
             return ret
-        elif self.mode=="oct_complete": 
+        elif self.mode=="oct_complete":
             ft=ft[...,:self.Ls//2 +1]
-            #block_ptr = -1
-            #bucketed_tensors = []
+            #gather-then-multiply per group (DC / each octave / Nyquist), never building the dense
+            #[B,C,all_bands,Ls/2+1] product. bit-identical to gather(ft.unsqueeze(-2)*giis, idx).
             ret = []
-            #ret2 = []
-        
-            t=ft.unsqueeze(-2)*self.giis #this has a lot of rendundant operations and, probably, consumes a lot of memory. Anyways, it is parallelizable, so it is not a big deal, I guess.
-
             L=self.idx_enc[0].shape[-1]
-            a=torch.gather(t[...,0,:].unsqueeze(-2), 3, self.idx_enc[0].unsqueeze(0).unsqueeze(0).expand(t.shape[0],t.shape[1],-1,-1)) #To make torch.gather broadcast, I need to add a dimension to the index.
-            a[...,(L+1)//2:]=torch.conj(a[...,(L+1)//2:])
-            #conjugate one of the partsk
+            a = ft[..., self.idx_enc[0]] * self.giis_oc_dc            #DC
+            a[...,(L+1)//2:]=torch.conj(a[...,(L+1)//2:])             #DC carries no mirrored freqs
             ret.append(torch.fft.ifft(a))
 
-            for i in range(self.numocts):
-                #c=torch.gather(t[...,i*self.binsoct:(i+1)*self.binsoct,:], 3, self.idx_enc[i]) 
-                #ret.append(torch.fft.ifft(torch.cat(bucketed_tensors,2)))
-                a=torch.gather(t[...,self.oct_offsets[i]+1:self.oct_offsets[i+1]+1,:], 3, self.idx_enc[i+1].unsqueeze(0).unsqueeze(0).expand(t.shape[0],t.shape[1],-1,-1)) #To make torch.gather broadcast, I need to add a dimension to the index.
+            for i in range(self.numocts):                            #octaves
+                a = ft[..., self.idx_enc[i+1]] * self.giis_oc[i]
                 ret.append(torch.fft.ifft(a))
-            
+
             L=self.idx_enc[-1].shape[-1]
-            a=torch.gather(t[...,-1,:].unsqueeze(-2), 3, self.idx_enc[-1].unsqueeze(0).unsqueeze(0).expand(t.shape[0],t.shape[1],-1,-1)) #To make torch.gather broadcast, I need to add a dimension to the index. 
-            a[...,:(L)//2]=torch.conj(a[...,:(L)//2]) #conjugate one of the parts (here the first)
+            a = ft[..., self.idx_enc[-1]] * self.giis_oc_nyq         #Nyquist
+            a[...,:(L)//2]=torch.conj(a[...,:(L)//2])                #Nyquist carries no mirrored freqs
             ret.append(torch.fft.ifft(a))
 
             return ret
@@ -705,17 +731,14 @@ class CQT_nsgt():
             torch.view_as_real(fr).index_add_(2, self.scatter_pos_flat, torch.view_as_real(src))
 
         elif self.mode=="oct_complete":
-            fr = torch.zeros(*cseq_shape[:2], self.nn//2+1, dtype=cseq_dtype, device=torch.device(self.device))  # Allocate output
-            # frequencies are bucketed by same time resolution
-            fbin_ptr = 0
-            for j, (fc, gdii_j) in enumerate(zip(cseq, self.gdiis)):
-                Lg_outer = fc.shape[-1]
-
-                nb_fbins = fc.shape[2]
-                temp0 = torch.zeros(*cseq_shape[:2],nb_fbins, Lg_outer, dtype=cseq_dtype, device=torch.device(self.device))  # Allocate output
-
-                temp0=fc*gdii_j.unsqueeze(0).unsqueeze(0)
-                fr+=torch.gather(temp0, 3, self.idx_dec[j].unsqueeze(0).unsqueeze(0).expand(temp0.shape[0], temp0.shape[1], -1, -1)).sum(2)
+            #single index_add overlap-add (see scatter_pos_oc_flat / scatter_mask_oc), no per-bucket
+            #dense gather(temp0,idx_dec).sum. per-bucket masks drop the DC/Nyquist mirrored columns the
+            #gather never read (else they leak to bin 0). real/imag added apart for mps. bit identical.
+            B_, C_ = cseq_shape[:2]
+            src = torch.cat([(fc * gdii_j.unsqueeze(0).unsqueeze(0) * mask_j).reshape(B_, C_, -1)
+                             for fc, gdii_j, mask_j in zip(cseq, self.gdiis, self.scatter_mask_oc)], dim=-1)
+            fr = torch.zeros(B_, C_, self.nn//2+1, dtype=cseq_dtype, device=torch.device(self.device))
+            torch.view_as_real(fr).index_add_(2, self.scatter_pos_oc_flat, torch.view_as_real(src))
 
         #end=time.time()
         #rint("in for loop",end-start)
