@@ -34,11 +34,11 @@ Different versions of the transform are implemented. They can be selected by cho
 
 mode          | Description  |  Output shape
 ------------- | ------------- | -------------
-"critical"      | (default) critical sampling (no redundancy) (slow implementation) |  list of tensors, each with different time resolution 
 "matrix"      |  Equal time resolution per frequency band. maximum redundancy (discards DC and Nyquist) | 2d-Tensor \[binsoct \times numocts, T\]
-"matrix_complete  | Same as above, but DC and Nyquist are included.  | 2d-Tensor \[binsoct \times numocts + 2, T\]
+"matrix_pow2" | Same as "matrix", but the time dimension is rounded up to a power of 2. (discards DC and Nyquist) | 2d-Tensor \[binsoct \times numocts, T\]
+"matrix_complete  | Same as "matrix", but DC and Nyquist are included.  | 2d-Tensor \[binsoct \times numocts + 2, T\]
 "oct" | Tradeoff between structure and redundancy. THe frequency bins are grouped by octave bands, each octave with a different time resolution. The time lengths are restricted to be powers of 2. (Discards DC and Nyquist) | list of tensors, one per octave band, each with different time resolution
-"oct_complete" | Same as above, but DC and Nyquist are included | list of tensors, one per octave band,DC and Nyquist, each with a different time resolution
+"oct_complete" | (default) Same as "oct", but DC and Nyquist are included | list of tensors, one per octave band,DC and Nyquist, each with a different time resolution
 
 
 
@@ -78,7 +78,6 @@ NumPy 2.x and Apple Silicon (MPS) are supported.
 - [ ] Do some proper documentation
 - [x] Test it for mixed precision. The transform runs in fp32 internally and is safe to call inside `torch.autocast` (see Mixed precision).
 - [ ] Make the apply_hpf_DC() and apply_lpf_DC() more handy and clear. Document the usage of those.
-- [ ] Accelerate the "critical" mode, similar method as in "oct" could also apply. (update: seems a bit tricky memory-wise)
 - [ ] Clean the whole __init__() method as now it is a mess. 
 - [x] Report the efficiency of the implementation in GPU. (time and frequency). See Performance (`oct` mode).
 - [x] Check if there is more redundancy to get rid of. Apparently, there is not

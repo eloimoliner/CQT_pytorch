@@ -39,7 +39,7 @@ from cqt_nsgt_pytorch import CQT_nsgt
 FS = 44100
 LS = 131072
 NUMOCTS = 8
-MODES = ("matrix_complete", "oct_complete", "critical")
+MODES = ("matrix_complete", "oct_complete")
 BINSOCTS = (32, 24)   # odd / even Nyquist window length
 MAX_DEV = 1e-8        # |H-1| tolerance; systematic errors show up as O(1)
 

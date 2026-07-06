@@ -63,7 +63,7 @@ def main():
     parser.add_argument("--mode", default="oct_complete,matrix_complete",
                         help="comma-separated CQT modes (see README). Defaults to the "
                              "two perfect-reconstruction workhorses. Use a "
-                             "*_complete/critical mode for perfect reconstruction.")
+                             "*_complete mode for perfect reconstruction.")
     parser.add_argument("--numocts", type=int, default=8)
     parser.add_argument("--binsoct", type=int, default=32)
     parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")

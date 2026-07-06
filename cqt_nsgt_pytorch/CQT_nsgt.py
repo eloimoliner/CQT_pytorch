@@ -16,25 +16,23 @@ def next_power_of_2(x):
 
 
 class CQT_nsgt():
-    def __init__(self,numocts, binsoct,  mode="critical", window="hann", flex_Q=None, fs=44100, audio_len=44100, device="cpu", dtype=torch.float32):
+    def __init__(self,numocts, binsoct,  mode="oct_complete", window="hann", flex_Q=None, fs=44100, audio_len=44100, device="cpu", dtype=torch.float32):
         """
             args:
                 numocts (int) number of octaves
                 binsoct (int) number of bins per octave. Can be a list if mode="flex_oct"
                 mode (string) defines the mode of operation:
-                     "critical": (default) critical sampling (no redundancy) returns a list of tensors, each with different time resolution (slow implementation)
-                     "critical_fast": notimplemented
                      "matrix": returns a 2d-matrix maximum redundancy (discards DC and Nyquist)
                      "matrix_pow2": returns a 2d-matrix maximum redundancy (discards DC and Nyquist) (time-resolution is rounded up to a power of 2)
                      "matrix_complete": returns a 2d-matrix maximum redundancy (with DC and Nyquist)
                      "oct": octave-wise rasterization ( modearate redundancy) returns a list of tensors, each from a different octave with different time resolution (discards DC and Nyquist)
-                     "oct_complete": octave-wise rasterization ( modearate redundancy) returns a list of tensors, each from a different octave with different time resolution (with DC and Nyquist)
+                     "oct_complete": (default) octave-wise rasterization ( modearate redundancy) returns a list of tensors, each from a different octave with different time resolution (with DC and Nyquist)
                 fs (float) sampling frequency
                 audio_len (int) sample length
                 device
         """
 
-        valid_modes = ("critical","matrix","matrix_pow2","matrix_complete","oct","oct_complete")
+        valid_modes = ("matrix","matrix_pow2","matrix_complete","oct","oct_complete")
         if mode not in valid_modes:
             raise ValueError(f"unknown mode {mode!r}; expected one of {valid_modes}")
 
@@ -250,14 +248,6 @@ class CQT_nsgt():
                     torch.gather(self.giis[i*self.binsoct:(i+1)*self.binsoct, :], 1, self.idx_enc[i])
                     for i in range(self.numocts)
                 ]
-        elif self.mode=="critical":
-            #self.giis, self.idx_enc=get_ragged_giis(self.g[sl], self.wins[sl], self.M[sl], self.mode)
-
-            ragged_giis = [torch.nn.functional.pad(torch.unsqueeze(gii, dim=0), (0, self.maxLg_enc-gii.shape[0])) for gii in self.g[sl]]
-            self.giis = torch.conj(torch.cat(ragged_giis))
-            #ragged_giis = [torch.nn.functional.pad(torch.unsqueeze(gii, dim=0), (0, self.maxLg_enc-gii.shape[0])) for gii in self.g[sl]]
-
-            #self.giis = torch.conj(torch.cat(ragged_giis))
 
         #FORWARD!! this is from nsigtf
         #self.backward = lambda c: nsigtf(c, self.gd, self.wins, self.nn, self.Ls, mode=self.mode,  device=self.device)
@@ -298,32 +288,6 @@ class CQT_nsgt():
 
                 
             return torch.conj(torch.cat(ragged_gdiis)).to(self.dtype)*self.maxLg_dec, ix
-
-        def get_ragged_gdiis_critical(gd, ms):
-            seq_gdiis=[]
-            ragged_gdiis=[]
-            mprev=-1
-            for i,(g,m) in enumerate(zip(gd, ms)):
-                if i>0 and m!=mprev:
-                    gdii=torch.conj(torch.cat(ragged_gdiis))
-                    if len(gdii.shape)==1:
-                        gdii=gdii.unsqueeze(0)
-                    #seq_gdiis.append(gdii[0:gdii.shape[0]//2 +1])
-                    seq_gdiis.append(gdii)
-                    ragged_gdiis=[]
-                    
-                Lg=g.shape[0]
-                gl=g[:(Lg+1)//2]
-                gr=g[(Lg+1)//2:]
-                zeros = torch.zeros(m-Lg ,dtype=g.dtype, device=g.device)  # pre-allocation
-                paddedg=torch.cat((gl, zeros, gr),0).unsqueeze(0)*m
-                ragged_gdiis.append(paddedg)
-                mprev=m
-            
-            gdii=torch.conj(torch.cat(ragged_gdiis))
-            seq_gdiis.append(gdii)
-            #seq_gdiis.append(gdii[0:gdii.shape[0]//2 +1])
-            return seq_gdiis
 
         def get_ragged_gdiis_oct(gd, ms, wins, mode):
             seq_gdiis=[]
@@ -396,8 +360,6 @@ class CQT_nsgt():
             for gdiis in self.gdiis:
                 gdiis.to(self.dtype)
 
-        elif self.mode=="critical":
-            self.gdiis =get_ragged_gdiis_critical(self.gd[sl], self.M[sl])
 
         self.loopparams_dec = []
         for gdii,win_range in zip(self.gd[sl], self.wins[sl]):
@@ -482,11 +444,9 @@ class CQT_nsgt():
             f = torch.nn.functional.pad(f, (0, self.nn - Ls))
         assert f.shape[-1] == self.nn
 
-        #half spectrum modes only use ft[..., :Ls//2+1] and for real input rfft gives exactly that,
-        #about 2x cheaper and half the memory with the same values as fft()[:half]. critical
-        #indexes ft with wraparound indices into negative freqs so it needs the full spectrum
-        _half = self.mode in ("matrix","matrix_pow2","oct","matrix_complete","oct_complete")
-        if _half and not f.is_complex():
+        #every mode uses only ft[..., :Ls//2+1]; for real input rfft gives exactly that,
+        #about 2x cheaper and half the memory with the same values as fft()[:half]
+        if not f.is_complex():
             ft = torch.fft.rfft(f)
         else:
             ft = torch.fft.fft(f)
@@ -567,37 +527,6 @@ class CQT_nsgt():
             #conjugate one of the partsk
             return torch.cat(ret,dim=2)
 
-        elif self.mode=="critical":
-            block_ptr = -1
-            bucketed_tensors = []
-            ret = []
-        
-            for j, (mii,win_range,Lg,col) in enumerate(self.loopparams_enc):
-
-                c = torch.zeros(*f.shape[:2], 1, mii, dtype=ft.dtype, device=torch.device(self.device))
-        
-                t = ft[:, :, win_range]*torch.fft.fftshift(self.giis[j, :Lg]) #this needs to be parallelized!
-        
-                sl1 = slice(None,(Lg+1)//2)
-                sl2 = slice(-(Lg//2),None)
-        
-                c[:, :, 0, sl1] = t[:, :, Lg//2:]  # if mii is odd, this is of length mii-mii//2
-                c[:, :, 0, sl2] = t[:, :, :Lg//2]  # if mii is odd, this is of length mii//2
-        
-                # start a new block
-                if block_ptr == -1 or bucketed_tensors[block_ptr][0].shape[-1] != mii:
-                    bucketed_tensors.append(c)
-                    block_ptr += 1
-                else:
-                    # concat block to previous contiguous frequency block with same time resolution
-                    bucketed_tensors[block_ptr] = torch.cat([bucketed_tensors[block_ptr], c], dim=2)
-        
-            # bucket-wise ifft
-            for bucketed_tensor in bucketed_tensors:
-                ret.append(torch.fft.ifft(bucketed_tensor))
-        
-            return ret
-
     def nsigtf(self,cseq):
         """
         mode: "matrix"
@@ -659,28 +588,6 @@ class CQT_nsgt():
                 temp0=fc*gdii_j.unsqueeze(0).unsqueeze(0)
                 fr+=torch.gather(temp0, 3, self.idx_dec[j].unsqueeze(0).unsqueeze(0).expand(temp0.shape[0], temp0.shape[1], -1, -1)).sum(2)
 
-        else:
-            # speed uniefficient but save mode
-            # frequencies are bucketed by same time resolution
-            fr = torch.zeros(*cseq_shape[:2], self.nn, dtype=cseq_dtype, device=torch.device(self.device))  # Allocate output
-            fbin_ptr = 0
-            for j, (fc, gdii_j) in enumerate(zip(cseq, self.gdiis)):
-                Lg_outer = fc.shape[-1]
-        
-                nb_fbins = fc.shape[2]
-                temp0 = torch.zeros(*cseq_shape[:2],nb_fbins, Lg_outer, dtype=cseq_dtype, device=torch.device(self.device))  # Allocate output
-        
-                temp0=fc*gdii_j.unsqueeze(0).unsqueeze(0)
-
-                for i,(wr1,wr2,Lg) in enumerate(self.loopparams_dec[fbin_ptr:fbin_ptr+nb_fbins][:fbins]):
-                    r = (Lg+1)//2
-                    l = (Lg//2)
-        
-                    fr[:, :, wr1] += temp0[:,:,i,Lg_outer-l:Lg_outer]
-                    fr[:, :, wr2] += temp0[:,:,i, :r]
-
-                fbin_ptr += nb_fbins
-        
         #end=time.time()
         #rint("in for loop",end-start)
         ftr = fr[:, :, :self.nn//2+1]
