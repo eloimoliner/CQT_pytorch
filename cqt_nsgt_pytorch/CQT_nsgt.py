@@ -16,7 +16,7 @@ def next_power_of_2(x):
 
 
 class CQT_nsgt():
-    def __init__(self,numocts, binsoct,  mode="oct_complete", window="hann", flex_Q=None, fs=44100, audio_len=44100, device="cpu", dtype=torch.float32):
+    def __init__(self,numocts, binsoct,  mode="oct", window="hann", flex_Q=None, fs=44100, audio_len=44100, device="cpu", dtype=torch.float32):
         """
             args:
                 numocts (int) number of octaves
@@ -25,8 +25,8 @@ class CQT_nsgt():
                      "matrix": returns a 2d-matrix maximum redundancy (discards DC and Nyquist)
                      "matrix_pow2": returns a 2d-matrix maximum redundancy (discards DC and Nyquist) (time-resolution is rounded up to a power of 2)
                      "matrix_complete": returns a 2d-matrix maximum redundancy (with DC and Nyquist)
-                     "oct": octave-wise rasterization ( modearate redundancy) returns a list of tensors, each from a different octave with different time resolution (discards DC and Nyquist)
-                     "oct_complete": (default) octave-wise rasterization ( modearate redundancy) returns a list of tensors, each from a different octave with different time resolution (with DC and Nyquist)
+                     "oct": (default) octave-wise rasterization ( modearate redundancy) returns a list of tensors, each from a different octave with different time resolution (discards DC and Nyquist)
+                     "oct_complete": octave-wise rasterization ( modearate redundancy) returns a list of tensors, each from a different octave with different time resolution (with DC and Nyquist)
                 fs (float) sampling frequency
                 audio_len (int) sample length
                 device

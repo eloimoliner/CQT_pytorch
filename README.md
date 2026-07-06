@@ -37,8 +37,8 @@ mode          | Description  |  Output shape
 "matrix"      |  Equal time resolution per frequency band. maximum redundancy (discards DC and Nyquist) | 2d-Tensor \[binsoct \times numocts, T\]
 "matrix_pow2" | Same as "matrix", but the time dimension is rounded up to a power of 2. (discards DC and Nyquist) | 2d-Tensor \[binsoct \times numocts, T\]
 "matrix_complete  | Same as "matrix", but DC and Nyquist are included.  | 2d-Tensor \[binsoct \times numocts + 2, T\]
-"oct" | Tradeoff between structure and redundancy. THe frequency bins are grouped by octave bands, each octave with a different time resolution. The time lengths are restricted to be powers of 2. (Discards DC and Nyquist) | list of tensors, one per octave band, each with different time resolution
-"oct_complete" | (default) Same as "oct", but DC and Nyquist are included | list of tensors, one per octave band,DC and Nyquist, each with a different time resolution
+"oct" | (default) Tradeoff between structure and redundancy. THe frequency bins are grouped by octave bands, each octave with a different time resolution. The time lengths are restricted to be powers of 2. (Discards DC and Nyquist) | list of tensors, one per octave band, each with different time resolution
+"oct_complete" | Same as "oct", but DC and Nyquist are included | list of tensors, one per octave band,DC and Nyquist, each with a different time resolution
 
 
 
