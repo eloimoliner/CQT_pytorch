@@ -16,7 +16,7 @@ def next_power_of_2(x):
 
 
 class CQT_nsgt():
-    def __init__(self,numocts, binsoct,  mode="oct", window="hann", fs=44100, audio_len=44100, device="cpu", dtype=torch.float32):
+    def __init__(self,numocts, binsoct,  mode="oct", window="hann", fs=44100, audio_len=44100, device="cpu", dtype=torch.float32, verbose=True):
         """
             args:
                 numocts (int) number of octaves
@@ -79,6 +79,7 @@ class CQT_nsgt():
         self.device=torch.device(device)
         self.mode=mode
         self.dtype=dtype
+        self.verbose=verbose
 
         self.frqs,self.q = self.scale()
 
@@ -87,14 +88,14 @@ class CQT_nsgt():
         # one such length changes the window lengths only negligibly, so the rounded octave
         # sizes are stable and a single pass suffices.
         if mode=="oct" or mode=="oct_complete":
-            _g,_rf,_M = nsgfwin(self.frqs, self.q, self.fs, self.Ls, dtype=self.dtype, device=self.device, min_win=4, window=window)
+            _g,_rf,_M = nsgfwin(self.frqs, self.q, self.fs, self.Ls, dtype=self.dtype, device=self.device, min_win=4, window=window, verbose=False)
             msz = 1
             for i in range(numocts):
                 lo, hi = self.oct_offsets[i]+1, self.oct_offsets[i+1]+1
                 msz = max(msz, next_power_of_2(int(_M[lo:hi].max())))
             self.Ls = ((self.Ls + msz - 1)//msz)*msz
 
-        self.g,rfbas,self.M = nsgfwin(self.frqs, self.q, self.fs, self.Ls, dtype=self.dtype, device=self.device, min_win=4, window=window)
+        self.g,rfbas,self.M = nsgfwin(self.frqs, self.q, self.fs, self.Ls, dtype=self.dtype, device=self.device, min_win=4, window=window, verbose=verbose)
 
         sl = slice(0,len(self.g)//2+1)
 
@@ -434,6 +435,45 @@ class CQT_nsgt():
             #flat index over all octaves so the inverse can overlap add with one index_add
             #(single index_add beats per octave scatter_add and a sparse matmul on gpu, bit identical)
             self.scatter_pos_flat = torch.cat([p.reshape(-1) for p in self.scatter_pos])
+
+        if self.verbose:
+            self.describe()
+
+    def describe(self):
+        """Print a table of the transform's per-octave characteristics: frequency range,
+        bins, coefficient time-frames and coefficient sample rate per octave band, plus the
+        global fmin/fmax and whether the internal FFT grid was zero-padded past audio_len."""
+        nyq = self.fs/2.0
+        fmin = float(self.frqs[0])
+        bl = self.binsoct
+        binstr = f"{bl[0]} (uniform)" if len(set(bl))==1 else str(bl)
+        lines = []
+        lines.append("="*64)
+        lines.append(f"CQT_nsgt  |  mode={self.mode}  |  fs={self.fs:g} Hz")
+        lines.append(f"  octaves={self.numocts}   bins/oct={binstr}   total log bins={sum(bl)}")
+        lines.append(f"  fmin={fmin:.3f} Hz   fmax(Nyquist)={nyq:.3f} Hz")
+        pad = self.nn - self.Ls_out
+        if pad > 0:
+            if self.mode in ("oct","oct_complete"):
+                why = f"even & multiple of coarsest band length {max(self.size_per_oct)}"
+            else:
+                why = "even length (Nyquist band)"
+            lines.append(f"  audio_len={self.Ls_out}  ->  internal grid nn={self.nn}   "
+                         f"(zero-padded +{pad} samples: {why})")
+        else:
+            lines.append(f"  audio_len={self.Ls_out} == internal grid nn={self.nn}   (no padding)")
+        lines.append(f"  {'oct':>3} | {'freq range (Hz)':^19} | {'bins':>4} | {'frames':>6} | {'coeff rate (Hz)':>15}")
+        lines.append(f"  {'-'*3}-+-{'-'*19}-+-{'-'*4}-+-{'-'*6}-+-{'-'*15}")
+        for i in range(self.numocts):
+            lo = float(self.frqs[self.oct_offsets[i]])
+            hi = fmin * 2.0**(i+1)
+            frames = int(self.M[self.oct_offsets[i]+1])   # M of octave i's first band (==size_per_oct[i] for oct modes)
+            rate = self.fs * frames / self.nn
+            lines.append(f"  {i:>3} | {lo:>8.1f} - {hi:>8.1f} | {bl[i]:>4} | {frames:>6} | {rate:>15.2f}")
+        if self.mode in ("oct_complete","matrix_complete"):
+            lines.append(f"  + DC band (0 - {fmin:.1f} Hz) and Nyquist band ({nyq:.0f} Hz)")
+        lines.append("="*64)
+        print("\n".join(lines))
 
     def apply_hpf_DC(self, x):
         Lin=x.shape[-1]
