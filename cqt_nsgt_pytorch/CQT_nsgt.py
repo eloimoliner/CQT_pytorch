@@ -1,7 +1,7 @@
 import torch 
 #from src.nsgt.cq  import NSGT
 
-from .fscale  import LogScale , FlexLogOctScale
+from .fscale  import VariableQLogScale
 
 from .nsgfwin import nsgfwin
 from .nsdual import nsdual
@@ -16,11 +16,15 @@ def next_power_of_2(x):
 
 
 class CQT_nsgt():
-    def __init__(self,numocts, binsoct,  mode="oct", window="hann", flex_Q=None, fs=44100, audio_len=44100, device="cpu", dtype=torch.float32):
+    def __init__(self,numocts, binsoct,  mode="oct", window="hann", fs=44100, audio_len=44100, device="cpu", dtype=torch.float32):
         """
             args:
                 numocts (int) number of octaves
-                binsoct (int) number of bins per octave. Can be a list if mode="flex_oct"
+                binsoct (int or list[int]) number of bins per octave. If a list, its length
+                    must equal numocts and index 0 is the lowest octave (closest to DC),
+                    matching the per-octave time-resolution convention (self.size_per_oct).
+                    This lets each octave have its own frequency resolution within a single
+                    invertible transform (e.g. binsoct=[8,8,8,16,16,16,16,32,32]).
                 mode (string) defines the mode of operation:
                      "matrix": returns a 2d-matrix maximum redundancy (discards DC and Nyquist)
                      "matrix_pow2": returns a 2d-matrix maximum redundancy (discards DC and Nyquist) (time-resolution is rounded up to a power of 2)
@@ -51,21 +55,24 @@ class CQT_nsgt():
         self.Ls_out=audio_len                 #true output length (what bwd returns)
         self.Ls=audio_len + (audio_len & 1)   #even grid length; may grow in the pre-pass below
 
-        # fmin sits exactly `numocts` octaves below Nyquist, and bins are spaced at
-        # exactly 1/binsoct octave. The grid fmin*2**(k/binsoct) hits Nyquist exactly
-        # at k=numocts*binsoct, so the separately-added Nyquist band lands on the grid
-        # and the numocts*binsoct log bins fill fmin .. one step below Nyquist. Net:
-        # exactly `numocts` octaves of coverage with exactly `binsoct` bins/octave.
-        fmin=fmax/(2**numocts)
-        fbins=int(binsoct*numocts)
-        fmax_grid=fmin*(2**(numocts - 1.0/binsoct))  # top log bin, 1/binsoct octave below Nyquist
-        self.numocts=numocts
-        self.binsoct=binsoct
-
-        if mode=="flex_oct":
-            self.scale = FlexLogOctScale(fs, self.numocts, self.binsoct, time_reductions)
+        # fmin sits exactly `numocts` octaves below Nyquist. Each octave i gets its own
+        # binsoct[i] bins spaced at exactly 1/binsoct[i] octave (VariableQLogScale), so the
+        # grid hits Nyquist exactly at the end of the last octave regardless of whether
+        # binsoct is uniform or varies per octave. self.oct_offsets[i]:self.oct_offsets[i+1]
+        # gives the flat-bin-index range for octave i.
+        if isinstance(binsoct, (list, tuple)):
+            assert len(binsoct) == numocts, "binsoct list must have length numocts"
+            binsoct = [int(b) for b in binsoct]
         else:
-            self.scale = LogScale(fmin, fmax_grid, fbins)
+            binsoct = [int(binsoct)] * numocts
+        self.binsoct = binsoct  # always list[int] of length numocts from here on
+        self.oct_offsets = [0]
+        for b in self.binsoct:
+            self.oct_offsets.append(self.oct_offsets[-1] + b)
+
+        fmin=fmax/(2**numocts)
+        self.numocts=numocts
+        self.scale = VariableQLogScale(fmin, self.numocts, self.binsoct)
 
         self.fs=fs
 
@@ -81,10 +88,10 @@ class CQT_nsgt():
         # sizes are stable and a single pass suffices.
         if mode=="oct" or mode=="oct_complete":
             _g,_rf,_M = nsgfwin(self.frqs, self.q, self.fs, self.Ls, dtype=self.dtype, device=self.device, min_win=4, window=window)
-            msz, idx = 1, 1
-            for _ in range(numocts):
-                msz = max(msz, next_power_of_2(int(_M[idx:idx+binsoct].max())))
-                idx += binsoct
+            msz = 1
+            for i in range(numocts):
+                lo, hi = self.oct_offsets[i]+1, self.oct_offsets[i+1]+1
+                msz = max(msz, next_power_of_2(int(_M[lo:hi].max())))
             self.Ls = ((self.Ls + msz - 1)//msz)*msz
 
         self.g,rfbas,self.M = nsgfwin(self.frqs, self.q, self.fs, self.Ls, dtype=self.dtype, device=self.device, min_win=4, window=window)
@@ -104,21 +111,18 @@ class CQT_nsgt():
             #round up all the window lengths of an octave to the next power of 2
             self.size_per_oct=[]
             nb=len(self.M)
-            idx=1
             for i in range(numocts):
-                value=next_power_of_2(self.M[idx:idx+binsoct].max())
+                lo, hi = self.oct_offsets[i]+1, self.oct_offsets[i+1]+1
+                value=next_power_of_2(self.M[lo:hi].max())
 
-                #value=M[idx:idx+binsoct].max()
                 self.size_per_oct.append(value)
-                self.M[idx:idx+binsoct]=value
-                #mirror to the negative-frequency half: positive bin j sits opposite bin nb-j,
-                #so bins [idx:idx+binsoct] mirror to [nb-idx-binsoct+1 : nb-idx+1]. The old
-                #[-idx-binsoct:-idx] was one index too low -- it clobbered the Nyquist slot and
-                #left the widest boundary window one octave short on M, so Lg>M (time aliasing,
-                #the painless condition) at non-power-of-2 lengths. Powers of two happened to
-                #dodge it; other lengths lost ~1e-5.
-                self.M[nb-idx-binsoct+1 : nb-idx+1]=value
-                idx+=binsoct
+                self.M[lo:hi]=value
+                #mirror to the negative-frequency half: positive bins [lo:hi] sit opposite
+                #bins [nb-hi+1 : nb-lo+1]. The old [-hi:-lo] was one index too low -- it
+                #clobbered the Nyquist slot and left the widest boundary window one octave
+                #short on M, so Lg>M (time aliasing, the painless condition) at non-power-of-2
+                #lengths. Powers of two happened to dodge it; other lengths lost ~1e-5.
+                self.M[nb-hi+1 : nb-lo+1]=value
 
 
         # calculate shifts
@@ -167,9 +171,28 @@ class CQT_nsgt():
             #ragged_giis=[]
             c=torch.zeros((len(g),self.Ls//2+1),dtype=self.dtype,device=self.device)
             ix=[]
+
+            # octave-boundary detection: for "oct"/"oct_complete", derive it from the known
+            # per-octave bin counts (self.oct_offsets) rather than comparing rounded window
+            # lengths (ms). With a non-uniform binsoct list, adjacent octaves can round to
+            # the SAME window length (e.g. a bins/octave increase offsetting the usual
+            # per-octave halving), which would make an ms-based boundary test silently merge
+            # two octaves into one bucket. matrix_complete keeps the ms-based test: M is
+            # already forced globally uniform there before this runs, so it can't tie.
+            bucket_id = None
+            if mode in ("oct", "oct_complete"):
+                base = 1 if mode == "oct_complete" else 0
+                bucket_id = [None]*len(g)
+                if mode == "oct_complete":
+                    bucket_id[0] = 0
+                    bucket_id[-1] = self.numocts + 1
+                for oi in range(self.numocts):
+                    for p in range(self.oct_offsets[oi], self.oct_offsets[oi+1]):
+                        bucket_id[p + base] = oi + base
+
             if mode=="oct":
                 for i in range(self.numocts):
-                    ix.append(torch.zeros((self.binsoct,self.size_per_oct[i]),dtype=torch.int64,device=self.device))
+                    ix.append(torch.zeros((self.binsoct[i],self.size_per_oct[i]),dtype=torch.int64,device=self.device))
             elif mode=="matrix" or mode=="matrix_pow2":
                 ix.append(torch.zeros((len(g),self.maxLg_enc),dtype=torch.int64,device=self.device))
 
@@ -177,7 +200,8 @@ class CQT_nsgt():
                 ix.append(torch.zeros((1,ms[0]),dtype=torch.int64,device=self.device))
                 count=0
                 for i in range(1,len(g)-1):
-                    if count==0 or ms[i] == ms[i-1]:
+                    same = (bucket_id[i]==bucket_id[i-1]) if mode=="oct_complete" else (ms[i]==ms[i-1])
+                    if count==0 or same:
                         count+=1
                     else:
                         ix.append(torch.zeros((count,ms[i-1]),dtype=torch.int64,device=self.device))
@@ -191,7 +215,11 @@ class CQT_nsgt():
             k=0
             for i,(gii, win_range) in enumerate(zip(g,wins)):
                 if i>0:
-                    if ms[i]!=ms[i-1] or ((mode=="oct_complete" or mode=="matrix_complete") and (j==0 or i==len(g)-1)):
+                    if mode in ("oct","oct_complete"):
+                        boundary = bucket_id[i]!=bucket_id[i-1]
+                    else:
+                        boundary = ms[i]!=ms[i-1] or (mode=="matrix_complete" and (j==0 or i==len(g)-1))
+                    if boundary:
                         j+=1
                         k=0
 
@@ -243,9 +271,9 @@ class CQT_nsgt():
             if self.mode=="oct":
                 #pregather each octave window at the encode indices so the forward can gather then multiply
                 #over each band support instead of multiplying the full half spectrum for every band
-                #giis_oct[i] is [binsoct, M_i] and gives the same result as gather(ft*giis)
+                #giis_oct[i] is [binsoct[i], M_i] and gives the same result as gather(ft*giis)
                 self.giis_oct = [
-                    torch.gather(self.giis[i*self.binsoct:(i+1)*self.binsoct, :], 1, self.idx_enc[i])
+                    torch.gather(self.giis[self.oct_offsets[i]:self.oct_offsets[i+1], :], 1, self.idx_enc[i])
                     for i in range(self.numocts)
                 ]
 
@@ -293,19 +321,35 @@ class CQT_nsgt():
             seq_gdiis=[]
             ragged_gdiis=[]
             mprev=-1
-            ix=[] 
+            ix=[]
+
+            # same octave-boundary detection as get_ragged_giis: derive it from the known
+            # per-octave bin counts instead of comparing rounded window lengths, since those
+            # can tie across octaves when binsoct varies (see get_ragged_giis for details).
+            # As a side effect this also robustly forces the DC->octave0 and lastoctave->Nyquist
+            # boundaries (bucket_id differs there by construction), so no extra i==0/i==len-1
+            # special-casing is needed here.
+            base = 1 if mode=="oct_complete" else 0
+            bucket_id = [None]*len(gd)
+            if mode=="oct_complete":
+                bucket_id[0] = 0
+                bucket_id[-1] = self.numocts + 1
+            for oi in range(self.numocts):
+                for p in range(self.oct_offsets[oi], self.oct_offsets[oi+1]):
+                    bucket_id[p + base] = oi + base
+
             if mode=="oct_complete":
                 ix+=[torch.zeros((1,self.Ls//2+1),dtype=torch.int64,device=self.device)+ms[0]//2]
 
-            ix+=[torch.zeros((self.binsoct,self.Ls//2+1),dtype=torch.int64,device=self.device)+self.size_per_oct[j]//2 for j in range(len(self.size_per_oct))]
+            ix+=[torch.zeros((self.binsoct[j],self.Ls//2+1),dtype=torch.int64,device=self.device)+self.size_per_oct[j]//2 for j in range(len(self.size_per_oct))]
             if mode=="oct_complete":
                 ix+=[torch.zeros((1,self.Ls//2+1),dtype=torch.int64,device=self.device)+ms[-1]//2]
-            
+
             #I nitialize the index with the center to make sure that it points to a 0
             j=0
             k=0
             for i,(g,m, win_range) in enumerate(zip(gd, ms, wins)):
-                if i>0 and m!=mprev or (mode=="oct_complete" and i==len(gd)-1):
+                if i>0 and bucket_id[i]!=bucket_id[i-1]:
                     #take care when size of DC is the same as the next octave, or last octave has the same size as nyquist!
                     gdii=torch.conj(torch.cat(ragged_gdiis))
                     if len(gdii.shape)==1:
@@ -378,7 +422,7 @@ class CQT_nsgt():
             self.scatter_pos = []
             for j in range(self.numocts):
                 Lo = int(self.size_per_oct[j])
-                bands = self.loopparams_dec[j*self.binsoct:(j+1)*self.binsoct]
+                bands = self.loopparams_dec[self.oct_offsets[j]:self.oct_offsets[j+1]]
                 pos = torch.zeros((len(bands), Lo), dtype=torch.int64, device=self.device)
                 for k,(wr1,wr2,Lg) in enumerate(bands):
                     r = (Lg+1)//2  #gl length goes to wr2
@@ -491,7 +535,7 @@ class CQT_nsgt():
             for i in range(self.numocts):
                 #c=torch.gather(t[...,i*self.binsoct:(i+1)*self.binsoct,:], 3, self.idx_enc[i]) 
                 #ret.append(torch.fft.ifft(torch.cat(bucketed_tensors,2)))
-                a=torch.gather(t[...,i*self.binsoct+1:(i+1)*self.binsoct+1,:], 3, self.idx_enc[i+1].unsqueeze(0).unsqueeze(0).expand(t.shape[0],t.shape[1],-1,-1)) #To make torch.gather broadcast, I need to add a dimension to the index.
+                a=torch.gather(t[...,self.oct_offsets[i]+1:self.oct_offsets[i+1]+1,:], 3, self.idx_enc[i+1].unsqueeze(0).unsqueeze(0).expand(t.shape[0],t.shape[1],-1,-1)) #To make torch.gather broadcast, I need to add a dimension to the index.
                 ret.append(torch.fft.ifft(a))
             
             L=self.idx_enc[-1].shape[-1]

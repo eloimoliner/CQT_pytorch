@@ -28,6 +28,19 @@ X=cqt.fwd(audio)# forward transform
 audio_reconstructed=cqt.bwd(X) #backward transform
 
 ```
+
+`binsoct` can also be a list of length `numocts` to give each octave its own frequency
+resolution within a single transform (index 0 = lowest octave, closest to DC). This is most
+useful with `mode="oct"`/`"oct_complete"`, which already return one tensor per octave with
+independent time resolution, so a list `binsoct` gives independent time *and* frequency
+resolution per octave without needing several separate `CQT_nsgt` instances:
+
+```py
+numocts=9
+binsoct=[8,8,8,16,16,16,16,32,32]  # coarser bins (better time resolution) near DC
+
+cqt=CQT_nsgt(numocts, binsoct, mode="oct_complete", fs=fs, audio_len=Ls, device="cuda", dtype=torch.float32)
+```
 ## Modes of operation
 
 Different versions of the transform are implemented. They can be selected by choosing the 'mode' parameter. Except "matrix" and "oct, that discard DC and Nyquist bands, the rest have perfect reconstruction.
