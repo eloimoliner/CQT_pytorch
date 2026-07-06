@@ -147,10 +147,6 @@ For comparison, the previous dense `oct_complete` took ~1135 ms / 2.0 GB at B=4 
 version is ~5× faster and ~2.7× leaner, with memory that no longer grows with the batch. GPU is
 substantially faster still; the FFTs are the floor.
 
-The gather-then-multiply forward, `rfft`, and single-`index_add` inverse that make this possible
-were contributed by [@cucuwritescode](https://github.com/cucuwritescode) for `oct` mode
-([PR #7](https://github.com/eloimoliner/CQT_pytorch/pull/7)); they are now applied to every mode.
-
 ## Mixed precision
 
 `torch.fft` has no fp16/bf16 kernels, so the transform always runs internally in its real float
@@ -179,7 +175,4 @@ uv run tests/test_variable_binsoct.py
 
 ## Acknowledgements
 
-Thanks to [@cucuwritescode](https://github.com/cucuwritescode) for the efficiency optimization
-([PR #7](https://github.com/eloimoliner/CQT_pytorch/pull/7)) — the gather-then-multiply forward,
-`rfft`, and single-`index_add` inverse that keep peak memory flat in batch size. Originally for
-`oct` mode, the same approach now accelerates every mode of the transform.
+Thanks to [@cucuwritescode](https://github.com/cucuwritescode) for the efficiency optimization.
