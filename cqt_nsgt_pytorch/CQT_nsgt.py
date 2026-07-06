@@ -266,6 +266,13 @@ class CQT_nsgt():
             self.giis, self.idx_enc=get_ragged_giis(self.g[sl], self.wins[sl], self.M[sl],self.mode)
             #self.idx_enc=self.idx_enc[0]
             #self.idx_enc=self.idx_enc.unsqueeze(0).unsqueeze(0)
+            if self.mode=="matrix" or self.mode=="matrix_pow2":
+                #pregather the window at the encode indices so the forward can gather then
+                #multiply over each band support ([all_bands, maxLg]) instead of building the
+                #dense [B,C,all_bands,Ls/2+1] product. giis_mat gives the same result as
+                #gather(ft.unsqueeze(-2)*giis, idx) because gather commutes with the elementwise
+                #multiply: ft[...,idx]*gather(giis,idx) == gather(ft*giis, idx). (same trick as oct)
+                self.giis_mat = torch.gather(self.giis, 1, self.idx_enc[0])
         elif self.mode=="oct" or self.mode=="oct_complete":
             self.giis, self.idx_enc=get_ragged_giis(self.g[sl], self.wins[sl], self.M[sl], self.mode)
             #self.idx_enc=self.idx_enc.unsqueeze(0).unsqueeze(0)
@@ -436,6 +443,21 @@ class CQT_nsgt():
             #(single index_add beats per octave scatter_add and a sparse matmul on gpu, bit identical)
             self.scatter_pos_flat = torch.cat([p.reshape(-1) for p in self.scatter_pos])
 
+        if self.mode=="matrix" or self.mode=="matrix_pow2":
+            #same idea as oct's scatter_pos, but every band shares Lo=maxLg_dec: precompute the
+            #output bin each padded dual-window column scatters to, so the inverse overlap-adds
+            #with ONE index_add instead of gather(temp0,idx_dec).sum which builds a dense
+            #[B,C,all_bands,nn//2+1] tensor. Middle (zero) columns map to bin 0 and add 0.
+            Lo = self.maxLg_dec
+            pos = torch.zeros((len(self.loopparams_dec), Lo), dtype=torch.int64, device=self.device)
+            for k,(wr1,wr2,Lg) in enumerate(self.loopparams_dec):
+                r = (Lg+1)//2   #gl length goes to wr2
+                l = Lg//2       #gr length goes to wr1
+                pos[k, :r] = wr2
+                if l>0:
+                    pos[k, Lo-l:Lo] = wr1
+            self.scatter_pos_mat = pos.reshape(-1)
+
         if self.verbose:
             self.describe()
 
@@ -537,14 +559,9 @@ class CQT_nsgt():
 
         if self.mode=="matrix" or self.mode=="matrix_pow2":
             ft=ft[...,:self.Ls//2+1]
-            #c = torch.zeros(*f.shape[:2], len(self.loopparams_enc), self.maxLg_enc, dtype=ft.dtype, device=torch.device(self.device))
-    
-            t=ft.unsqueeze(-2)*self.giis #this has a lot of rendundant operations and, probably, consumes a lot of memory. Anyways, it is parallelizable, so it is not a big deal, I guess.
-            #c=torch.gather(t, 3, self.idx_enc)
-            a=torch.gather(t, 3, self.idx_enc[0].unsqueeze(0).unsqueeze(0).expand(t.shape[0],t.shape[1],-1,-1)) #To make torch.gather broadcast, I need to add a dimension to the index. 
-
-            #a=torch.cat(a,torch.conj(torch.fliplr(a[...,0:-1])),dim=-1)
-
+            #gather each band's spectral support directly to [B,C,all_bands,maxLg] and multiply
+            #by the pregathered window -- never builds the dense [B,C,all_bands,Ls/2+1] tensor
+            a = ft[..., self.idx_enc[0]] * self.giis_mat
             return torch.fft.ifft(a)
     
         elif self.mode=="oct":
@@ -644,7 +661,16 @@ class CQT_nsgt():
 
         # The overlap-add procedure including multiplication with the synthesis windows
         #tart=time.time()
-        if self.mode=="matrix" or self.mode=="matrix_complete" or self.mode=="matrix_pow2":
+        if self.mode=="matrix" or self.mode=="matrix_pow2":
+            #overlap-add every band support into the output spectrum with ONE index_add instead
+            #of gather(temp0,idx_dec).sum, which materialises a dense [B,C,all_bands,nn//2+1]
+            #tensor. real/imag added apart so it also runs on mps (no complex scatter). bit identical.
+            B_, C_ = cseq_shape[:2]
+            src = (fc*self.gdiis.unsqueeze(0).unsqueeze(0)).reshape(B_, C_, -1)
+            fr = torch.zeros(B_, C_, self.nn//2+1, dtype=cseq_dtype, device=torch.device(self.device))
+            torch.view_as_real(fr).index_add_(2, self.scatter_pos_mat, torch.view_as_real(src))
+
+        elif self.mode=="matrix_complete":
             fr = torch.zeros(*cseq_shape[:2], self.nn//2+1, dtype=cseq_dtype, device=torch.device(self.device))  # Allocate output
             temp0=fc*self.gdiis.unsqueeze(0).unsqueeze(0)
             fr=torch.gather(temp0, 3, self.idx_dec.unsqueeze(0).unsqueeze(0).expand(temp0.shape[0], temp0.shape[1], -1, -1)).sum(2)
