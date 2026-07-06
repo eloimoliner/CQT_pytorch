@@ -46,7 +46,7 @@ BINSOCT = 32
 MODES = ("oct", "matrix")
 LENGTHS = (131072, 262144, 100003, 131073)   # incl. odd, to exercise the padded grid
 PARTITION_MIN_SNR = 200.0   # Hhpf = 1 - Hlpf is exact up to float round-off
-FULL_MIN_SNR = 100.0        # transform reconstruction floor (float64 ~130 dB)
+FULL_MIN_SNR = 200.0        # with a correct Hlpf, oct/matrix + lpf hits the float64 floor (~280 dB)
 
 
 def snr_db(ref, rec):

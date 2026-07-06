@@ -125,15 +125,19 @@ class CQT_nsgt():
         # calculate dual windows
         self.gd = nsdual(self.g, self.wins, self.nn, self.M, dtype=self.dtype, device=self.device)
 
-        #filter DC
+        # Hlpf is the combined transfer of the DC and Nyquist bands -- the bands that the
+        # non-complete "oct"/"matrix" modes drop -- so that Hhpf = 1 - Hlpf is exactly the
+        # transfer of everything they keep, and x = bwd(fwd(x)) + apply_lpf_DC(x) holds to
+        # the reconstruction floor. Build each band's transfer the same way nsdual builds the
+        # frame operator: fftshift(g)*fftshift(gd)*M scattered at that band's win_range. This
+        # is exactly consistent with the transform (summing it over ALL bands gives 1 to
+        # float precision) and needs no per-parity index juggling. The previous hand-indexed
+        # Nyquist split was ~1e-3 off in the band's skirt just below Nyquist, which left a
+        # ~-140 dB residual there in the oct/matrix + apply_lpf_DC reconstruction.
         self.Hlpf=torch.zeros(self.Ls, dtype=self.dtype, device=self.device)
-        self.Hlpf[0:len(self.g[0])//2]=self.g[0][:len(self.g[0])//2]*self.gd[0][:len(self.g[0])//2]*self.M[0]
-        self.Hlpf[-len(self.g[0])//2:]=self.g[0][len(self.g[0])//2:]*self.gd[0][len(self.g[0])//2:]*self.M[0]
-        #filter nyquist
-        nyquist_idx=len(self.g)//2
-        Lg=len(self.g[nyquist_idx])
-        self.Hlpf[self.wins[nyquist_idx][0:(Lg+1)//2]]+=self.g[nyquist_idx][(Lg)//2:]*self.gd[nyquist_idx][(Lg)//2:]*self.M[nyquist_idx]
-        self.Hlpf[self.wins[nyquist_idx][-(Lg-1)//2:]]+=self.g[nyquist_idx][:(Lg)//2]*self.gd[nyquist_idx][:(Lg)//2]*self.M[nyquist_idx]
+        for k in (0, len(self.g)//2):   # DC band, Nyquist band
+            self.Hlpf[self.wins[k]] += (torch.fft.fftshift(self.g[k])
+                                        * torch.fft.fftshift(self.gd[k]) * self.M[k])
 
         self.Hhpf=1-self.Hlpf
 
