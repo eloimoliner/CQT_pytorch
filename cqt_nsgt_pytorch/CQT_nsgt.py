@@ -27,13 +27,16 @@ class CQT_nsgt():
                      "matrix": returns a 2d-matrix maximum redundancy (discards DC and Nyquist)
                      "matrix_pow2": returns a 2d-matrix maximum redundancy (discards DC and Nyquist) (time-resolution is rounded up to a power of 2)
                      "matrix_complete": returns a 2d-matrix maximum redundancy (with DC and Nyquist)
-                     "matrix_slow": returns a 2d-matrix maximum redundancy (slow implementation)
                      "oct": octave-wise rasterization ( modearate redundancy) returns a list of tensors, each from a different octave with different time resolution (discards DC and Nyquist)
                      "oct_complete": octave-wise rasterization ( modearate redundancy) returns a list of tensors, each from a different octave with different time resolution (with DC and Nyquist)
                 fs (float) sampling frequency
                 audio_len (int) sample length
                 device
         """
+
+        valid_modes = ("critical","matrix","matrix_pow2","matrix_complete","oct","oct_complete")
+        if mode not in valid_modes:
+            raise ValueError(f"unknown mode {mode!r}; expected one of {valid_modes}")
 
         fmax=fs/2 -10**-6 #the maximum frequency is Nyquist
         # The transform runs on an internal FFT grid whose length may need to be padded past
@@ -92,7 +95,7 @@ class CQT_nsgt():
 
         # coefficients per slice
         self.ncoefs = max(int(math.ceil(float(len(gii))/mii))*mii for mii,gii in zip(self.M[sl],self.g[sl]))        
-        if mode=="matrix" or mode=="matrix_complete" or mode=="matrix_slow":
+        if mode=="matrix" or mode=="matrix_complete":
             #just use the maximum resolution everywhere
             self.M[:] = self.M.max()
         elif mode=="matrix_pow2":
@@ -247,9 +250,9 @@ class CQT_nsgt():
                     torch.gather(self.giis[i*self.binsoct:(i+1)*self.binsoct, :], 1, self.idx_enc[i])
                     for i in range(self.numocts)
                 ]
-        elif self.mode=="critical" or self.mode=="matrix_slow":
+        elif self.mode=="critical":
             #self.giis, self.idx_enc=get_ragged_giis(self.g[sl], self.wins[sl], self.M[sl], self.mode)
-            
+
             ragged_giis = [torch.nn.functional.pad(torch.unsqueeze(gii, dim=0), (0, self.maxLg_enc-gii.shape[0])) for gii in self.g[sl]]
             self.giis = torch.conj(torch.cat(ragged_giis))
             #ragged_giis = [torch.nn.functional.pad(torch.unsqueeze(gii, dim=0), (0, self.maxLg_enc-gii.shape[0])) for gii in self.g[sl]]
@@ -395,9 +398,6 @@ class CQT_nsgt():
 
         elif self.mode=="critical":
             self.gdiis =get_ragged_gdiis_critical(self.gd[sl], self.M[sl])
-        elif self.mode=="matrix_slow":
-            ragged_gdiis = [torch.nn.functional.pad(torch.unsqueeze(gdii, dim=0), (0, self.maxLg_dec-gdii.shape[0])) for gdii in self.gd]
-            self.gdiis = torch.conj(torch.cat(ragged_gdiis))
 
         self.loopparams_dec = []
         for gdii,win_range in zip(self.gd[sl], self.wins[sl]):
@@ -483,8 +483,8 @@ class CQT_nsgt():
         assert f.shape[-1] == self.nn
 
         #half spectrum modes only use ft[..., :Ls//2+1] and for real input rfft gives exactly that,
-        #about 2x cheaper and half the memory with the same values as fft()[:half]. critical and
-        #matrix_slow index ft with wraparound indices into negative freqs so they need the full spectrum
+        #about 2x cheaper and half the memory with the same values as fft()[:half]. critical
+        #indexes ft with wraparound indices into negative freqs so it needs the full spectrum
         _half = self.mode in ("matrix","matrix_pow2","oct","matrix_complete","oct_complete")
         if _half and not f.is_complex():
             ft = torch.fft.rfft(f)
@@ -567,20 +567,7 @@ class CQT_nsgt():
             #conjugate one of the partsk
             return torch.cat(ret,dim=2)
 
-        elif self.mode=="matrix_slow":
-            c = torch.zeros(*f.shape[:2], len(self.loopparams_enc), self.maxLg_enc, dtype=ft.dtype, device=torch.device(self.device))
-
-            for j, (mii,win_range,Lg,col) in enumerate(self.loopparams_enc):
-                t = ft[:, :, win_range]*torch.fft.fftshift(self.giis[j, :Lg])
-
-                sl1 = slice(None,(Lg+1)//2)
-                sl2 = slice(-(Lg//2),None)
-
-                c[:, :, j, sl1] = t[:, :, Lg//2:]  # if mii is odd, this is of length mii-mii//2
-                c[:, :, j, sl2] = t[:, :, :Lg//2]  # if mii is odd, this is of length mii//2
-
-            return torch.fft.ifft(c)
-        elif self.mode=="critical": 
+        elif self.mode=="critical":
             block_ptr = -1
             bucketed_tensors = []
             ret = []
@@ -622,7 +609,7 @@ class CQT_nsgt():
         """
 
 
-        if self.mode!="matrix" and self.mode!="matrix_slow" and self.mode!="matrix_complete" and self.mode!="matrix_pow2":
+        if self.mode!="matrix" and self.mode!="matrix_complete" and self.mode!="matrix_pow2":
             #print(cseq)
             assert type(cseq) == list
             nfreqs = 0
@@ -644,29 +631,7 @@ class CQT_nsgt():
 
         # The overlap-add procedure including multiplication with the synthesis windows
         #tart=time.time()
-        if self.mode=="matrix_slow":
-            fr = torch.zeros(*cseq_shape[:2], self.nn, dtype=cseq_dtype, device=torch.device(self.device))  # Allocate output
-            temp0 = torch.empty(*cseq_shape[:2], self.maxLg_dec, dtype=fr.dtype, device=torch.device(self.device))  # pre-allocation
-
-            for i,(wr1,wr2,Lg) in enumerate(self.loopparams_dec[:fbins]):
-                t = fc[:, :, i]
-
-                r = (Lg+1)//2
-                l = (Lg//2)
-
-                t1 = temp0[:, :, :r]
-                t2 = temp0[:, :, Lg-l:Lg]
-
-                t1[:, :, :] = t[:, :, :r]
-                t2[:, :, :] = t[:, :, self.maxLg_dec-l:self.maxLg_dec]
-
-                temp0[:, :, :Lg] *= self.gdiis[i, :Lg] 
-                temp0[:, :, :Lg] *= self.maxLg_dec
-
-                fr[:, :, wr1] += t2
-                fr[:, :, wr2] += t1
-
-        elif self.mode=="matrix" or self.mode=="matrix_complete" or self.mode=="matrix_pow2":
+        if self.mode=="matrix" or self.mode=="matrix_complete" or self.mode=="matrix_pow2":
             fr = torch.zeros(*cseq_shape[:2], self.nn//2+1, dtype=cseq_dtype, device=torch.device(self.device))  # Allocate output
             temp0=fc*self.gdiis.unsqueeze(0).unsqueeze(0)
             fr=torch.gather(temp0, 3, self.idx_dec.unsqueeze(0).unsqueeze(0).expand(temp0.shape[0], temp0.shape[1], -1, -1)).sum(2)

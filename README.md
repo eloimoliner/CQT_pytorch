@@ -37,7 +37,6 @@ mode          | Description  |  Output shape
 "critical"      | (default) critical sampling (no redundancy) (slow implementation) |  list of tensors, each with different time resolution 
 "matrix"      |  Equal time resolution per frequency band. maximum redundancy (discards DC and Nyquist) | 2d-Tensor \[binsoct \times numocts, T\]
 "matrix_complete  | Same as above, but DC and Nyquist are included.  | 2d-Tensor \[binsoct \times numocts + 2, T\]
-"matrix_slow" | Slower version of "matrix_complete". Might show similar efficiency in CPU and consumes way less memory | 2d-Tensor \[binsoct \times numocts + 2, T\]
 "oct" | Tradeoff between structure and redundancy. THe frequency bins are grouped by octave bands, each octave with a different time resolution. The time lengths are restricted to be powers of 2. (Discards DC and Nyquist) | list of tensors, one per octave band, each with different time resolution
 "oct_complete" | Same as above, but DC and Nyquist are included | list of tensors, one per octave band,DC and Nyquist, each with a different time resolution
 
