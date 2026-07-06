@@ -36,7 +36,19 @@ class CQT_nsgt():
         """
 
         fmax=fs/2 -10**-6 #the maximum frequency is Nyquist
-        self.Ls=audio_len #the length is given
+        # The transform runs on an internal FFT grid whose length may need to be padded past
+        # audio_len for correct reconstruction; the true (possibly odd) output length is kept
+        # separately and the inverse truncates back to it. Two requirements on the grid:
+        #  * even, because the NSGT places a real Nyquist band at bin nn//2 which only exists
+        #    for even length (odd length corrupts/overflows that band);
+        #  * for the octave modes, a multiple of the coarsest octave's coefficient length
+        #    (max size_per_oct), so the octave downsampling divides the FFT length exactly --
+        #    otherwise the frame operator develops a near-gap and loses ~1e-5.
+        # The octave multiple is computed by a cheap pre-pass below (it depends on the window
+        # lengths, which depend on the grid length). For an even, aligned audio_len (e.g. a
+        # power of two) this is all a no-op and self.Ls==audio_len as before.
+        self.Ls_out=audio_len                 #true output length (what bwd returns)
+        self.Ls=audio_len + (audio_len & 1)   #even grid length; may grow in the pre-pass below
 
         # fmin sits exactly `numocts` octaves below Nyquist, and bins are spaced at
         # exactly 1/binsoct octave. The grid fmin*2**(k/binsoct) hits Nyquist exactly
@@ -60,7 +72,19 @@ class CQT_nsgt():
         self.mode=mode
         self.dtype=dtype
 
-        self.frqs,self.q = self.scale() 
+        self.frqs,self.q = self.scale()
+
+        # pre-pass for the octave modes: find the coarsest octave coefficient length and pad
+        # the grid up to a multiple of it (see the length comment above). Padding by less than
+        # one such length changes the window lengths only negligibly, so the rounded octave
+        # sizes are stable and a single pass suffices.
+        if mode=="oct" or mode=="oct_complete":
+            _g,_rf,_M = nsgfwin(self.frqs, self.q, self.fs, self.Ls, dtype=self.dtype, device=self.device, min_win=4, window=window)
+            msz, idx = 1, 1
+            for _ in range(numocts):
+                msz = max(msz, next_power_of_2(int(_M[idx:idx+binsoct].max())))
+                idx += binsoct
+            self.Ls = ((self.Ls + msz - 1)//msz)*msz
 
         self.g,rfbas,self.M = nsgfwin(self.frqs, self.q, self.fs, self.Ls, dtype=self.dtype, device=self.device, min_win=4, window=window)
 
@@ -76,8 +100,9 @@ class CQT_nsgt():
             self.M[:]=next_power_of_2(self.M.max())
 
         elif mode=="oct" or mode=="oct_complete":
-            #round uo all the lengths of an octave to the next power of 2
+            #round up all the window lengths of an octave to the next power of 2
             self.size_per_oct=[]
+            nb=len(self.M)
             idx=1
             for i in range(numocts):
                 value=next_power_of_2(self.M[idx:idx+binsoct].max())
@@ -85,7 +110,13 @@ class CQT_nsgt():
                 #value=M[idx:idx+binsoct].max()
                 self.size_per_oct.append(value)
                 self.M[idx:idx+binsoct]=value
-                self.M[-idx-binsoct:-idx]=value
+                #mirror to the negative-frequency half: positive bin j sits opposite bin nb-j,
+                #so bins [idx:idx+binsoct] mirror to [nb-idx-binsoct+1 : nb-idx+1]. The old
+                #[-idx-binsoct:-idx] was one index too low -- it clobbered the Nyquist slot and
+                #left the widest boundary window one octave short on M, so Lg>M (time aliasing,
+                #the painless condition) at non-power-of-2 lengths. Powers of two happened to
+                #dodge it; other lengths lost ~1e-5.
+                self.M[nb-idx-binsoct+1 : nb-idx+1]=value
                 idx+=binsoct
 
 
@@ -442,7 +473,10 @@ class CQT_nsgt():
 
         Ls = f.shape[-1]
 
-        assert self.nn == Ls
+        #accept the true (possibly odd) length and pad up to the even internal grid (self.nn)
+        if Ls < self.nn:
+            f = torch.nn.functional.pad(f, (0, self.nn - Ls))
+        assert f.shape[-1] == self.nn
 
         #half spectrum modes only use ft[..., :Ls//2+1] and for real input rfft gives exactly that,
         #about 2x cheaper and half the memory with the same values as fft()[:half]. critical and
@@ -682,7 +716,7 @@ class CQT_nsgt():
         #rint("in for loop",end-start)
         ftr = fr[:, :, :self.nn//2+1]
         sig = torch.fft.irfft(ftr, n=self.nn)
-        sig = sig[:, :, :self.Ls] # Truncate the signal to original length (if given)
+        sig = sig[:, :, :self.Ls_out] # Truncate the signal to the true output length
         return sig
 
     def fwd(self,x):
