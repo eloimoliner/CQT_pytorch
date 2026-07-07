@@ -1,11 +1,15 @@
 from setuptools import find_packages, setup
 
+with open("README.md", "r", encoding="utf-8") as fh:
+    long_description = fh.read()
+
 setup(
     name="cqt-nsgt-pytorch",
     packages=find_packages(exclude=[]),
     version="1.0.0",
     license="MIT",
     description="Pytorch implementation of an invertible and differentiable Constant-Q Transform based Non-stationary Gabor Transform (NSGT) for audio processing.",
+    long_description=long_description,
     long_description_content_type="text/markdown",
     author="Eloi Moliner",
     author_email="eloi.moliner@aalto.fi",
