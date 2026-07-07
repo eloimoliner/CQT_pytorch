@@ -65,6 +65,13 @@ class CQT_nsgt():
             binsoct = [int(b) for b in binsoct]
         else:
             binsoct = [int(binsoct)] * numocts
+
+        # Validate: bins per octave must be >= 2 (1 bin creates unrealistic time resolution)
+        for i, b in enumerate(binsoct):
+            if b < 2:
+                raise ValueError(f"binsoct[{i}]={b} is invalid; bins per octave must be >= 2. "
+                                f"1 bin/octave creates exponentially high time resolution and breaks the inverse transform.")
+
         self.binsoct = binsoct  # always list[int] of length numocts from here on
         self.oct_offsets = [0]
         for b in self.binsoct:
